@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS server_agents_credential_hash_uidx;
+DROP INDEX IF EXISTS server_agents_registration_token_hash_uidx;
