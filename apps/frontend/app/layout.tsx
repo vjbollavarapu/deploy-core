@@ -10,26 +10,30 @@ const geistSans = Geist({ subsets: ['latin'], variable: '--font-geist-sans' })
 const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
 
 export const metadata: Metadata = {
-  title: 'DeployCore — Infrastructure Control Plane',
+  title: {
+    default: 'DeployCore',
+    template: '%s · DeployCore',
+  },
   description:
     'Self-hosted deployment and infrastructure orchestration platform for applications, servers, and databases.',
-  generator: 'v0.app',
+  applicationName: 'DeployCore',
   icons: {
     icon: [
+      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
       {
         url: '/icon-light-32x32.png',
+        sizes: '32x32',
+        type: 'image/png',
         media: '(prefers-color-scheme: light)',
       },
       {
         url: '/icon-dark-32x32.png',
+        sizes: '32x32',
+        type: 'image/png',
         media: '(prefers-color-scheme: dark)',
       },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
-      },
     ],
-    apple: '/apple-icon.png',
+    apple: [{ url: '/apple-icon.png', sizes: '180x180', type: 'image/png' }],
   },
 }
 

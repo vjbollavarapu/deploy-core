@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { DeployCoreLogo } from '@/components/platform/deploycore-logo'
 import {
   apiClient,
   ApiError,
@@ -279,7 +280,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={value}>
       {showBootSplash || blockingRedirect ? (
-        <div className="flex min-h-svh items-center justify-center bg-background" aria-live="polite" role="status">
+        <div
+          className="flex min-h-svh flex-col items-center justify-center gap-3 bg-background"
+          aria-live="polite"
+          role="status"
+        >
+          <DeployCoreLogo size={36} className="rounded-md" />
           <span className="sr-only">Loading DeployCore…</span>
         </div>
       ) : (

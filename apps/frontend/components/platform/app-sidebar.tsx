@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/sidebar'
 import { useAuth } from '@/lib/auth-context'
 import { adminNavEntry, navGroups } from '@/lib/nav'
+import { DeployCoreLogo } from './deploycore-logo'
 import { OrganizationSwitcher } from './organization-switcher'
 
 export function AppSidebar() {
@@ -53,16 +54,7 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" aria-label="Go to dashboard" render={<Link href="/dashboard" />}>
-              <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                <svg viewBox="0 0 24 24" fill="none" className="size-4" aria-hidden>
-                  <path
-                    d="M4 12L12 4L20 12L12 20L4 12Z"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </div>
+              <DeployCoreLogo size={28} className="rounded-md" />
               <div className="flex flex-col gap-0 leading-none">
                 <span className="font-semibold">DeployCore</span>
                 <span className="text-xs text-muted-foreground">Control Plane</span>
