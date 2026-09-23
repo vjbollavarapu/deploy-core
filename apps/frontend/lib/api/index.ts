@@ -5,7 +5,16 @@
  * separate and map at the client boundary.
  */
 export { API_BASE } from './contract'
-export { apiClient, ApiError, tokenStorage, orgStorage } from './client'
+export {
+  apiClient,
+  ApiError,
+  tokenStorage,
+  refreshTokenStorage,
+  orgStorage,
+  persistTokenPair,
+  clearSessionTokens,
+  refreshAccessToken,
+} from './client'
 export type {
   APIError,
   Application,

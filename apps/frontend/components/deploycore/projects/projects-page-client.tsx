@@ -8,7 +8,7 @@ import { LoadingState } from '@/components/platform/loading-state'
 import { PageContainer } from '@/components/platform/page-container'
 import { PageHeader } from '@/components/platform/page-header'
 import { apiClient, type Page, type WireProject, type WireEnvironment } from '@/lib/api'
-import { useOrganization } from '@/lib/auth-context'
+import { useAuth, useOrganization } from '@/lib/auth-context'
 import type { Project } from '@/lib/types'
 
 interface ProjectsPageClientProps {
@@ -17,6 +17,7 @@ interface ProjectsPageClientProps {
 
 export function ProjectsPageClient({ projects: fallbackProjects }: ProjectsPageClientProps) {
   const { activeOrg } = useOrganization()
+  const { user } = useAuth()
   const [projectList, setProjectList] = useState<Project[]>(fallbackProjects)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -67,7 +68,9 @@ export function ProjectsPageClient({ projects: fallbackProjects }: ProjectsPageC
                 applicationCount: 0,
                 health: 'healthy',
                 lastDeployment: 'Just now',
-                owner: { name: 'DeployCore Admin' },
+                owner: {
+                  name: user?.displayName || user?.email || 'Unknown',
+                },
                 updatedAt: p.updatedAt
                   ? new Date(p.updatedAt).toLocaleDateString()
                   : 'Today',
@@ -103,7 +106,7 @@ export function ProjectsPageClient({ projects: fallbackProjects }: ProjectsPageC
     return () => {
       cancelled = true
     }
-  }, [activeOrg?.id, fallbackProjects, refreshKey])
+  }, [activeOrg?.id, fallbackProjects, refreshKey, user?.displayName, user?.email])
 
   return (
     <PageContainer density="wide">

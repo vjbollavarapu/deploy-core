@@ -1,4 +1,4 @@
-import { API_BASE, type ErrorEnvelope } from './contract'
+import { API_BASE, type AuthResult, type ErrorEnvelope, type TokenPair } from './contract'
 
 export class ApiError extends Error {
   code: string
@@ -6,7 +6,13 @@ export class ApiError extends Error {
   details?: Record<string, unknown>
   status: number
 
-  constructor(status: number, message: string, code: string = 'INTERNAL_ERROR', requestId?: string, details?: Record<string, unknown>) {
+  constructor(
+    status: number,
+    message: string,
+    code: string = 'INTERNAL_ERROR',
+    requestId?: string,
+    details?: Record<string, unknown>,
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
@@ -16,21 +22,38 @@ export class ApiError extends Error {
   }
 }
 
-const TOKEN_KEY = 'deploycore_access_token'
+const ACCESS_TOKEN_KEY = 'deploycore_access_token'
+const REFRESH_TOKEN_KEY = 'deploycore_refresh_token'
 const ORG_KEY = 'deploycore_active_org_id'
 
 export const tokenStorage = {
   get: (): string | null => {
     if (typeof window === 'undefined') return null
-    return localStorage.getItem(TOKEN_KEY)
+    return localStorage.getItem(ACCESS_TOKEN_KEY)
   },
   set: (token: string) => {
     if (typeof window === 'undefined') return
-    localStorage.setItem(TOKEN_KEY, token)
+    localStorage.setItem(ACCESS_TOKEN_KEY, token)
   },
   clear: () => {
     if (typeof window === 'undefined') return
-    localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(ACCESS_TOKEN_KEY)
+  },
+}
+
+/** Refresh tokens are stored in localStorage to match the current JSON token contract (not HttpOnly cookies). */
+export const refreshTokenStorage = {
+  get: (): string | null => {
+    if (typeof window === 'undefined') return null
+    return localStorage.getItem(REFRESH_TOKEN_KEY)
+  },
+  set: (token: string) => {
+    if (typeof window === 'undefined') return
+    localStorage.setItem(REFRESH_TOKEN_KEY, token)
+  },
+  clear: () => {
+    if (typeof window === 'undefined') return
+    localStorage.removeItem(REFRESH_TOKEN_KEY)
   },
 }
 
@@ -49,14 +72,77 @@ export const orgStorage = {
   },
 }
 
+export function persistTokenPair(tokens: TokenPair | undefined) {
+  if (!tokens?.accessToken) return
+  tokenStorage.set(tokens.accessToken)
+  if (tokens.refreshToken) {
+    refreshTokenStorage.set(tokens.refreshToken)
+  }
+}
+
+export function clearSessionTokens() {
+  tokenStorage.clear()
+  refreshTokenStorage.clear()
+}
+
 interface RequestOptions extends RequestInit {
   orgId?: string
+  /** Internal: set after a successful refresh retry to prevent loops. */
+  _retry?: boolean
+  /** Skip attaching Authorization / org headers (unused auth bootstrap). */
+  skipAuth?: boolean
+}
+
+function isAuthBootstrapPath(url: string): boolean {
+  return /\/auth\/(login|register|refresh|logout|forgot-password|reset-password)(?:\?|$)/.test(url)
+}
+
+let refreshInFlight: Promise<boolean> | null = null
+
+/**
+ * Exchange refresh token for a new token pair. Uses raw fetch to avoid recursion
+ * through the authenticated request path.
+ */
+export async function refreshAccessToken(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight
+
+  refreshInFlight = (async () => {
+    const refreshToken = refreshTokenStorage.get()
+    if (!refreshToken) return false
+
+    try {
+      const response = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      })
+      if (!response.ok) {
+        clearSessionTokens()
+        return false
+      }
+      const data = (await response.json()) as AuthResult
+      if (!data.tokens?.accessToken) {
+        clearSessionTokens()
+        return false
+      }
+      persistTokenPair(data.tokens)
+      return true
+    } catch {
+      clearSessionTokens()
+      return false
+    } finally {
+      refreshInFlight = null
+    }
+  })()
+
+  return refreshInFlight
 }
 
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-  const url = endpoint.startsWith('http') || endpoint.startsWith('/api/')
-    ? endpoint
-    : `${API_BASE}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
+  const url =
+    endpoint.startsWith('http') || endpoint.startsWith('/api/')
+      ? endpoint
+      : `${API_BASE}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
 
   const headers = new Headers(options.headers)
 
@@ -64,14 +150,16 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     headers.set('Content-Type', 'application/json')
   }
 
-  const token = tokenStorage.get()
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`)
-  }
+  if (!options.skipAuth) {
+    const token = tokenStorage.get()
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
 
-  const orgId = options.orgId || orgStorage.get()
-  if (orgId && !headers.has('X-DeployCore-Organization-Id')) {
-    headers.set('X-DeployCore-Organization-Id', orgId)
+    const orgId = options.orgId || orgStorage.get()
+    if (orgId && !headers.has('X-DeployCore-Organization-Id')) {
+      headers.set('X-DeployCore-Organization-Id', orgId)
+    }
   }
 
   const response = await fetch(url, {
@@ -79,7 +167,6 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     headers,
   })
 
-  // Handle 204 No Content
   if (response.status === 204) {
     return {} as T
   }
@@ -88,6 +175,22 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   const isJson = contentType.includes('application/json')
 
   if (!response.ok) {
+    // Attempt refresh once for expired/invalid access tokens (not for auth bootstrap or authz).
+    if (
+      response.status === 401 &&
+      !options._retry &&
+      !options.skipAuth &&
+      !isAuthBootstrapPath(url) &&
+      refreshTokenStorage.get()
+    ) {
+      // Drain body before retry.
+      await response.text().catch(() => '')
+      const refreshed = await refreshAccessToken()
+      if (refreshed) {
+        return request<T>(endpoint, { ...options, _retry: true })
+      }
+    }
+
     if (isJson) {
       try {
         const errorData = (await response.json()) as ErrorEnvelope
@@ -104,7 +207,6 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
         if (err instanceof ApiError) throw err
       }
     }
-    // Never surface raw HTML/proxy bodies to the UI (I12).
     await response.text().catch(() => '')
     throw new ApiError(
       response.status,
@@ -114,8 +216,6 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   }
 
   if (!isJson) {
-    // Non-JSON text response (e.g. plain-text errors). T is typed by the caller;
-    // the cast is intentional — there is no generic way to prove string ⊆ T.
     return (await response.text()) as unknown as T
   }
 
@@ -130,28 +230,27 @@ export const apiClient = {
     request<T>(endpoint, {
       ...options,
       method: 'POST',
-      body: body instanceof FormData ? body : JSON.stringify(body),
+      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
     }),
 
   put: <T>(endpoint: string, body?: unknown, options?: RequestOptions) =>
     request<T>(endpoint, {
       ...options,
       method: 'PUT',
-      body: body instanceof FormData ? body : JSON.stringify(body),
+      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
     }),
 
   patch: <T>(endpoint: string, body?: unknown, options?: RequestOptions) =>
     request<T>(endpoint, {
       ...options,
       method: 'PATCH',
-      body: body instanceof FormData ? body : JSON.stringify(body),
+      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
     }),
 
   delete: <T>(endpoint: string, options?: RequestOptions) =>
     request<T>(endpoint, { ...options, method: 'DELETE' }),
 }
 
-/** Operator-safe message: never dump HTML or multi-kilobyte bodies into the UI. */
 function safeOperatorMessage(candidate: string | undefined, status: number): string {
   const trimmed = (candidate || '').trim()
   if (

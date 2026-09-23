@@ -3,6 +3,8 @@
 import type { ReactNode } from 'react'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
+import { CreateOrganizationEmptyState } from '@/components/deploycore/auth/create-organization-empty-state'
+import { useAuth, useOrganization } from '@/lib/auth-context'
 import { AppSidebar } from './app-sidebar'
 import { TopBar } from './top-bar'
 
@@ -11,6 +13,18 @@ interface AppShellProps {
 }
 
 export function AppShell({ children }: AppShellProps) {
+  const { isAuthenticated, isLoading } = useAuth()
+  const { activeOrg, organizations } = useOrganization()
+
+  if (isAuthenticated && !isLoading && (organizations.length === 0 || !activeOrg)) {
+    return (
+      <>
+        <CreateOrganizationEmptyState />
+        <Toaster />
+      </>
+    )
+  }
+
   return (
     <SidebarProvider>
       <AppSidebar />
