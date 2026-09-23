@@ -4,15 +4,19 @@ import Link from 'next/link'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { findServerByName } from '@/lib/servers'
-import { servers } from '@/lib/mock-data'
+import { servers as rawServers } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const servers = getDemoFixtures(rawServers)
 import type { Container } from '@/lib/types'
 import { ContainerRowActions } from './container-row-actions'
 
 interface ContainersTableProps {
   containers: Container[]
+  onActionSuccess?: () => void
 }
 
-export function ContainersTable({ containers }: ContainersTableProps) {
+export function ContainersTable({ containers, onActionSuccess }: ContainersTableProps) {
   return (
     <Table>
       <TableHeader>
@@ -73,7 +77,11 @@ export function ContainersTable({ containers }: ContainersTableProps) {
                 <StatusBadge status={ctr.status} showDot />
               </TableCell>
               <TableCell className="text-right">
-                <ContainerRowActions container={ctr} serverHref={serverHref} />
+                <ContainerRowActions
+                  container={ctr}
+                  serverHref={serverHref}
+                  onActionSuccess={onActionSuccess}
+                />
               </TableCell>
             </TableRow>
           )

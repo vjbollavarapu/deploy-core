@@ -276,6 +276,40 @@ func (s *Service) Invite(ctx context.Context, actorID, orgID uuid.UUID, email st
 	return inv, nil
 }
 
+func (s *Service) ListInvitations(ctx context.Context, actorID, orgID uuid.UUID, limit, offset int) ([]Invitation, int64, error) {
+	if err := s.authz.RequirePermission(ctx, actorID, orgID, rbac.MemberRead); err != nil {
+		return nil, 0, err
+	}
+	if _, err := s.repo.GetOrganization(ctx, orgID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, 0, apierror.NotFoundCode(apierror.CodeOrganizationNotFound, "organization not found")
+		}
+		return nil, 0, err
+	}
+	return s.repo.ListInvitations(ctx, orgID, limit, offset)
+}
+
+func (s *Service) RevokeInvitation(ctx context.Context, actorID, orgID, invitationID uuid.UUID, meta AuditMeta) error {
+	if err := s.authz.RequirePermission(ctx, actorID, orgID, rbac.MemberInvite); err != nil {
+		return err
+	}
+	if _, err := s.repo.GetOrganization(ctx, orgID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return apierror.NotFoundCode(apierror.CodeOrganizationNotFound, "organization not found")
+		}
+		return err
+	}
+	now := s.now().UTC()
+	if err := s.repo.RevokeInvitation(ctx, orgID, invitationID, now); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return apierror.NotFound("invitation not found or already closed")
+		}
+		return err
+	}
+	s.writeAudit(ctx, &orgID, &actorID, "organization.invitation.revoke", "invitation", invitationID.String(), meta, nil, nil)
+	return nil
+}
+
 func (s *Service) AcceptInvitation(ctx context.Context, actorID uuid.UUID, actorEmail, rawToken string, meta AuditMeta) (Member, error) {
 	if strings.TrimSpace(rawToken) == "" {
 		return Member{}, apierror.Validation("invalid token", map[string]any{

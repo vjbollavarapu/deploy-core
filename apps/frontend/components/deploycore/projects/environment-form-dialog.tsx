@@ -27,17 +27,20 @@ import {
   slugify,
   type EnvironmentFormValues,
 } from '@/lib/validations/project'
+import { apiClient, ApiError } from '@/lib/api'
 
 interface EnvironmentFormDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectName: string
+  projectId?: string
   existingNames?: string[]
   onSuccess?: (values: EnvironmentFormValues) => void
 }
 
 function EnvironmentFormFields({
   projectName,
+  projectId,
   existingNames = [],
   onOpenChange,
   onSuccess,
@@ -69,7 +72,27 @@ function EnvironmentFormFields({
     }
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 450))
+      if (projectId) {
+        try {
+          await apiClient.post(`/projects/${projectId}/environments`, {
+            name: values.name,
+            slug: values.slug,
+            kind: values.type.toLowerCase(),
+          })
+        } catch (err) {
+          if (err instanceof ApiError) {
+            if (err.status === 409 || err.code === 'CONFLICT') {
+              setError('slug', {
+                message: 'An environment with this slug already exists in this project',
+              })
+              return
+            }
+            setServerError(err.message)
+            return
+          }
+          throw err
+        }
+      }
       toast.success(`Environment “${values.name}” added to ${projectName}`)
       onSuccess?.(values)
       onOpenChange(false)
@@ -174,6 +197,7 @@ export function EnvironmentFormDialog({
   open,
   onOpenChange,
   projectName,
+  projectId,
   existingNames,
   onSuccess,
 }: EnvironmentFormDialogProps) {
@@ -190,6 +214,7 @@ export function EnvironmentFormDialog({
           <EnvironmentFormFields
             key={projectName}
             projectName={projectName}
+            projectId={projectId}
             existingNames={existingNames}
             onOpenChange={onOpenChange}
             onSuccess={onSuccess}

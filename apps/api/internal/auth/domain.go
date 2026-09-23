@@ -34,17 +34,17 @@ type UserRecord struct {
 
 // Session is a refresh-token-backed login session.
 type Session struct {
-	ID                   uuid.UUID
-	UserID               uuid.UUID
-	FamilyID             uuid.UUID
-	ReplacedBySessionID  *uuid.UUID
-	RefreshTokenHash     string
-	UserAgent            *string
-	IPAddress            *string
-	ExpiresAt            time.Time
-	RevokedAt            *time.Time
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	FamilyID            uuid.UUID
+	ReplacedBySessionID *uuid.UUID
+	RefreshTokenHash    string
+	UserAgent           *string
+	IPAddress           *string
+	ExpiresAt           time.Time
+	RevokedAt           *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // PasswordResetToken stores only a hash of the reset secret.

@@ -14,18 +14,47 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { DestructiveConfirmDialog } from '@/components/platform/destructive-confirm-dialog'
+import { apiClient, ApiError } from '@/lib/api'
 import { getDatabaseBackupRuns } from '@/lib/databases'
+import { isDemoModeEnabled } from '@/lib/mock-isolation'
 import type { DatabaseInstance } from '@/lib/types'
 
 interface DatabaseRestorePanelProps {
   database: DatabaseInstance
 }
 
+const RESTORE_CONFIRM = 'RESTORE'
+
 export function DatabaseRestorePanel({ database }: DatabaseRestorePanelProps) {
   const runs = getDatabaseBackupRuns(database).filter((run) => run.status === 'success')
   const [selectedRunId, setSelectedRunId] = useState(runs[0]?.id ?? '')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const selected = runs.find((run) => run.id === selectedRunId)
+
+  async function onConfirmRestore() {
+    if (!selected) return
+    if (isDemoModeEnabled()) {
+      toast.message('Demo mode: restore is not submitted to the Control Plane.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await apiClient.post(`/backups/${selected.id}/restore`, {
+        targetDatabaseId: database.id,
+        confirm: RESTORE_CONFIRM,
+      })
+      toast.success(`Restore queued for ${database.name}`)
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : 'Restore is unavailable until a real backup ID from the Control Plane is selected.'
+      toast.error(message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -34,8 +63,8 @@ export function DatabaseRestorePanel({ database }: DatabaseRestorePanelProps) {
         <AlertTitle>Destructive restore</AlertTitle>
         <AlertDescription>
           Restoring overwrites the live data on {database.name}. Connected applications may fail or
-          serve stale data until the restore completes. This cannot be undone without another
-          restore from a different backup.
+          serve stale data until the restore completes. Confirmation phrase must be exactly{' '}
+          <span className="font-mono">{RESTORE_CONFIRM}</span> (Control Plane contract).
         </AlertDescription>
       </Alert>
 
@@ -43,13 +72,15 @@ export function DatabaseRestorePanel({ database }: DatabaseRestorePanelProps) {
         <CardHeader>
           <CardTitle>Restore from backup</CardTitle>
           <CardDescription>
-            Choose a successful backup run. You must type the database name to confirm.
+            Choose a successful backup run. Type {RESTORE_CONFIRM} to confirm — not the database
+            name.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {runs.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No successful backups are available to restore.
+              No successful backups are available to restore. When not in demo mode, backup runs
+              must come from the Control Plane API.
             </p>
           ) : (
             <>
@@ -97,7 +128,7 @@ export function DatabaseRestorePanel({ database }: DatabaseRestorePanelProps) {
                 <Button
                   variant="destructive"
                   size="sm"
-                  disabled={!selected}
+                  disabled={!selected || submitting}
                   onClick={() => setConfirmOpen(true)}
                 >
                   <RotateCcw data-icon="inline-start" />
@@ -113,11 +144,11 @@ export function DatabaseRestorePanel({ database }: DatabaseRestorePanelProps) {
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={`Restore ${database.name}?`}
-        description={`This permanently overwrites the current ${database.type} data on ${database.name} with backup ${selected?.id ?? ''}. Production traffic and writes will be interrupted. Type the database name to confirm.`}
+        description={`This permanently overwrites the current ${database.type} data on ${database.name} with backup ${selected?.id ?? ''}. Type ${RESTORE_CONFIRM} to confirm.`}
         confirmLabel="Restore now"
-        confirmationPhrase={database.name}
+        confirmationPhrase={RESTORE_CONFIRM}
         onConfirm={() => {
-          toast.success(`Restore of ${database.name} queued from ${selected?.id}`)
+          void onConfirmRestore()
         }}
       />
     </div>

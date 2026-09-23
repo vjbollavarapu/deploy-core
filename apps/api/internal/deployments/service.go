@@ -286,31 +286,18 @@ func (s *Service) Advance(ctx context.Context, id uuid.UUID, from string, in Tra
 	return updated, nil
 }
 
-// AdminReconcile allows moving a terminal deployment for operational recovery.
+// AdminReconcile is intentionally disabled for v1 (I8/I10).
+// Reversing terminal deployments (e.g. FAILED→RUNNING) outside an explicit,
+// audited recovery workflow is unsafe. This method is not HTTP-mounted; keep
+// the service entrypoint closed so internal callers cannot casually mutate state.
 func (s *Service) AdminReconcile(ctx context.Context, actorID, id uuid.UUID, to, message string, meta AuditMeta) (Deployment, error) {
-	d, err := s.repo.Get(ctx, id)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return Deployment{}, apierror.NotFoundCode(apierror.CodeDeploymentNotFound, "deployment not found")
-		}
-		return Deployment{}, err
-	}
-	if err := s.authz.RequirePermission(ctx, actorID, d.OrganizationID, rbac.DeploymentCancel); err != nil {
-		return Deployment{}, err
-	}
-	if !IsTerminal(d.Status) {
-		return Deployment{}, apierror.Conflict("administrative reconciliation requires a terminal deployment")
-	}
-	updated, err := s.repo.AdminReconcile(ctx, id, d.Status, to, message, requestid.FromContext(ctx), s.now().UTC())
-	if err != nil {
-		return mapTransitionErr(err)
-	}
-	events, _ := s.repo.ListEvents(ctx, id)
-	updated.Events = events
-	s.writeAudit(ctx, &d.OrganizationID, &actorID, "deployment.reconcile", "deployment", id.String(), meta,
-		map[string]any{"status": d.Status}, map[string]any{"status": updated.Status},
-	)
-	return updated, nil
+	_ = ctx
+	_ = actorID
+	_ = id
+	_ = to
+	_ = message
+	_ = meta
+	return Deployment{}, apierror.Conflict("administrative terminal-state reversal is disabled; use a new deployment or authorized recovery procedure")
 }
 
 func mapTransitionErr(err error) (Deployment, error) {

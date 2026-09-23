@@ -1,21 +1,8 @@
-import { Card, CardContent } from '@/components/ui/card'
-import { PageContainer } from '@/components/platform/page-container'
-import { PageHeader } from '@/components/platform/page-header'
-import { ContainersTable } from '@/components/deploycore/containers/containers-table'
+import { ContainersPageClient } from '@/components/deploycore/containers/containers-page-client'
 import { containers } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
 
 export default function ContainersPage() {
-  return (
-    <PageContainer density="wide">
-      <PageHeader
-        title="Containers"
-        description="Every container across the fleet — inspect, restart, stop, or remove with confirmation."
-      />
-      <Card>
-        <CardContent className="p-0">
-          <ContainersTable containers={containers} />
-        </CardContent>
-      </Card>
-    </PageContainer>
-  )
+  return <ContainersPageClient containers={getDemoFixtures(containers)} />
 }
+

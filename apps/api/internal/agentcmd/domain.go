@@ -4,45 +4,11 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 )
 
-// SchemaVersion is the current command contract version.
-const SchemaVersion = 1
-
-const (
-	OpDeployRevision   = "DEPLOY_REVISION"
-	OpStopContainer    = "STOP_CONTAINER"
-	OpStartContainer   = "START_CONTAINER"
-	OpRestartContainer = "RESTART_CONTAINER"
-	OpRemoveContainer  = "REMOVE_CONTAINER"
-	OpFetchLogs        = "FETCH_LOGS"
-	OpStreamLogs       = "STREAM_LOGS"
-	OpBuildImage       = "BUILD_IMAGE"
-	OpPullImage        = "PULL_IMAGE"
-	OpCreateNetwork    = "CREATE_NETWORK"
-	OpCreateVolume     = "CREATE_VOLUME"
-	OpRemoveVolume     = "REMOVE_VOLUME"
-	OpAttachVolume     = "ATTACH_VOLUME"
-	OpDetachVolume     = "DETACH_VOLUME"
-	OpInspectVolume    = "INSPECT_VOLUME"
-	OpRunHealthCheck   = "RUN_HEALTH_CHECK"
-	OpCreateBackup     = "CREATE_BACKUP"
-	OpRestoreBackup    = "RESTORE_BACKUP"
-	OpProvisionDatabase = "PROVISION_DATABASE"
-	OpStartDatabase     = "START_DATABASE"
-	OpStopDatabase      = "STOP_DATABASE"
-)
-
-const (
-	StatusPending   = "pending"
-	StatusAccepted  = "accepted"
-	StatusRunning   = "running"
-	StatusCompleted = "completed"
-	StatusFailed    = "failed"
-	StatusExpired   = "expired"
-	StatusCancelled = "cancelled"
-)
+// Constants replaced by protocol-go
 
 // Command is a versionable, structured instruction for an agent.
 // Payload must be structured JSON — never arbitrary shell text.
@@ -79,11 +45,12 @@ type IssueInput struct {
 
 func AllowedOperations() []string {
 	return []string{
-		OpDeployRevision, OpStopContainer, OpStartContainer, OpRestartContainer, OpRemoveContainer,
-		OpFetchLogs, OpStreamLogs, OpBuildImage, OpPullImage, OpCreateNetwork, OpCreateVolume,
-		OpRemoveVolume, OpAttachVolume, OpDetachVolume, OpInspectVolume,
-		OpRunHealthCheck, OpCreateBackup, OpRestoreBackup,
-		OpProvisionDatabase, OpStartDatabase, OpStopDatabase,
+		protocol.OpDeployRevision, protocol.OpStopContainer, protocol.OpStartContainer, protocol.OpRestartContainer, protocol.OpRemoveContainer,
+		protocol.OpFetchLogs, protocol.OpStreamLogs, protocol.OpBuildImage, protocol.OpPullImage,
+		protocol.OpCreateNetwork, protocol.OpRemoveNetwork, protocol.OpInspectNetwork,
+		protocol.OpCreateVolume, protocol.OpRemoveVolume, protocol.OpAttachVolume, protocol.OpDetachVolume, protocol.OpInspectVolume,
+		protocol.OpRunHealthCheck, protocol.OpCreateBackup, protocol.OpRestoreBackup,
+		protocol.OpProvisionDatabase, protocol.OpStartDatabase, protocol.OpStopDatabase,
 	}
 }
 

@@ -13,7 +13,10 @@ import {
   getDatabaseLogs,
   type DatabaseSectionId,
 } from '@/lib/databases'
-import { databases } from '@/lib/mock-data'
+import { databases as rawDatabases } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const databases = getDemoFixtures(rawDatabases)
 
 const SECTION_IDS = new Set(DATABASE_SECTIONS.map((s) => s.id))
 

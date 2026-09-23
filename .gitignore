@@ -117,6 +117,14 @@ Thumbs.db
 Desktop.ini
 
 # ------------------------------------------------------------
+# Agent local runtime data (credentials, journals — never commit)
+# ------------------------------------------------------------
+
+apps/agent/data/
+**/credentials.json
+**/command-journal.json
+
+# ------------------------------------------------------------
 # Temporary files
 # ------------------------------------------------------------
 
@@ -140,3 +148,11 @@ temp/
 
 docker-compose.override.yml
 compose.override.yml
+# Local build artifacts
+/apps/api/api
+
+# Local validation/debug workspace
+/scratch/
+
+# Local Agent release/validation binaries
+/apps/agent/deploycore-agent-linux-arm64

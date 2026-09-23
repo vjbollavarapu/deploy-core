@@ -51,7 +51,7 @@ func SupportedInitially(provider string) bool {
 
 type ghcrProvider struct{}
 
-func (ghcrProvider) Name() string      { return ProviderGHCR }
+func (ghcrProvider) Name() string       { return ProviderGHCR }
 func (ghcrProvider) DefaultURL() string { return "ghcr.io" }
 
 func (p ghcrProvider) NormalizeURL(raw string) (string, error) {
@@ -70,7 +70,7 @@ func (ghcrProvider) ValidateCredentials(creds *Credentials) error {
 
 type dockerHubProvider struct{}
 
-func (dockerHubProvider) Name() string      { return ProviderDockerHub }
+func (dockerHubProvider) Name() string       { return ProviderDockerHub }
 func (dockerHubProvider) DefaultURL() string { return "docker.io" }
 
 func (p dockerHubProvider) NormalizeURL(raw string) (string, error) {
@@ -92,7 +92,7 @@ func (dockerHubProvider) ValidateCredentials(creds *Credentials) error {
 
 type ociProvider struct{}
 
-func (ociProvider) Name() string      { return ProviderOCI }
+func (ociProvider) Name() string       { return ProviderOCI }
 func (ociProvider) DefaultURL() string { return "" }
 
 func (ociProvider) NormalizeURL(raw string) (string, error) {
@@ -112,7 +112,7 @@ type stubProvider struct {
 	defaultURL string
 }
 
-func (s stubProvider) Name() string      { return s.name }
+func (s stubProvider) Name() string       { return s.name }
 func (s stubProvider) DefaultURL() string { return s.defaultURL }
 
 func (s stubProvider) NormalizeURL(raw string) (string, error) {

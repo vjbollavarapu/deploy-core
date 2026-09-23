@@ -9,7 +9,10 @@ import {
 } from '@/components/ui/table'
 import { EnvironmentBadge } from '@/components/platform/environment-badge'
 import { StatusBadge } from '@/components/platform/status-badge'
-import { projects } from '@/lib/mock-data'
+import { projects as rawProjects } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const projects = getDemoFixtures(rawProjects)
 import type { Application } from '@/lib/types'
 
 interface ApplicationsTableProps {

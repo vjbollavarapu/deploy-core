@@ -15,6 +15,7 @@ var ErrNotFound = errors.New("metrics: not found")
 type Repository interface {
 	GetServerOrg(ctx context.Context, serverID uuid.UUID) (uuid.UUID, error)
 	GetApplicationOrg(ctx context.Context, appID uuid.UUID) (uuid.UUID, error)
+	GetApplicationPlacement(ctx context.Context, appID uuid.UUID) (orgID uuid.UUID, serverID *uuid.UUID, err error)
 	UpsertServerSnapshot(ctx context.Context, snap ServerSnapshot) (ServerSnapshot, error)
 	GetServerSnapshot(ctx context.Context, serverID uuid.UUID) (ServerSnapshot, error)
 	UpsertContainerSnapshot(ctx context.Context, snap ContainerSnapshot) (ContainerSnapshot, error)
@@ -49,6 +50,18 @@ func (r *PostgresRepository) GetApplicationOrg(ctx context.Context, appID uuid.U
 		return uuid.Nil, ErrNotFound
 	}
 	return orgID, err
+}
+
+func (r *PostgresRepository) GetApplicationPlacement(ctx context.Context, appID uuid.UUID) (uuid.UUID, *uuid.UUID, error) {
+	var orgID uuid.UUID
+	var serverID *uuid.UUID
+	err := r.pool.QueryRow(ctx, `
+		SELECT organization_id, target_server_id FROM applications WHERE id = $1 AND deleted_at IS NULL`, appID).
+		Scan(&orgID, &serverID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, nil, ErrNotFound
+	}
+	return orgID, serverID, err
 }
 
 func (r *PostgresRepository) UpsertServerSnapshot(ctx context.Context, snap ServerSnapshot) (ServerSnapshot, error) {

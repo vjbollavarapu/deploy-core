@@ -1,14 +1,25 @@
 import {
-  applications,
-  databases,
-  deployments,
-  domains,
-  envVarHierarchy,
-  networks,
-  projects,
-  secrets,
-  volumes,
+  applications as rawApplications,
+  databases as rawDatabases,
+  deployments as rawDeployments,
+  domains as rawDomains,
+  envVarHierarchy as rawEnvVarHierarchy,
+  networks as rawNetworks,
+  projects as rawProjects,
+  secrets as rawSecrets,
+  volumes as rawVolumes,
 } from '@/lib/mock-data'
+import { getDemoFixtures, allowSyntheticFallback } from '@/lib/mock-isolation'
+
+const applications = getDemoFixtures(rawApplications)
+const databases = getDemoFixtures(rawDatabases)
+const deployments = getDemoFixtures(rawDeployments)
+const domains = getDemoFixtures(rawDomains)
+const envVarHierarchy = getDemoFixtures(rawEnvVarHierarchy)
+const networks = getDemoFixtures(rawNetworks)
+const projects = getDemoFixtures(rawProjects)
+const secrets = getDemoFixtures(rawSecrets)
+const volumes = getDemoFixtures(rawVolumes)
 import type {
   Application,
   DatabaseInstance,
@@ -20,14 +31,34 @@ import type {
   Status,
 } from '@/lib/types'
 
-export function findProject(projectId: string): Project | undefined {
-  return projects.find((p) => p.slug === projectId || p.id === projectId)
+export function findProject(projectId: string, list: Project[] = projects): Project | undefined {
+  const found = list.find((p) => p.slug === projectId || p.id === projectId)
+  if (found) return found
+  if (allowSyntheticFallback() && projectId && projectId !== 'undefined') {
+    return {
+      id: projectId,
+      name: projectId.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      slug: projectId.toLowerCase(),
+      environments: ['production', 'staging'],
+      applicationCount: 0,
+      health: 'healthy',
+      lastDeployment: 'Never',
+      owner: { name: 'DeployCore Admin' },
+      updatedAt: 'Just now',
+    }
+  }
+  return undefined
 }
 
 export function resolveEnvironment(project: Project, environmentId: string): string | undefined {
-  return project.environments.find(
+  const found = project.environments.find(
     (env) => env.toLowerCase() === environmentId.toLowerCase() || env === environmentId,
   )
+  if (found) return found
+  if (environmentId && environmentId !== 'undefined') {
+    return environmentId.charAt(0).toUpperCase() + environmentId.slice(1)
+  }
+  return undefined
 }
 
 export function environmentSlug(environment: string): string {

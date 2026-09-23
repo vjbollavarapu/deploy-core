@@ -63,19 +63,19 @@ type Repository struct {
 }
 
 type WebhookDelivery struct {
-	ID                   uuid.UUID
-	OrganizationID       uuid.UUID
-	ConnectionID         uuid.UUID
-	Provider             string
-	DeliveryID           string
-	EventType            string
-	RepositoryFullName   string
-	Branch               string
-	CommitSHA            string
-	Status               string
-	DeploymentIDs        []uuid.UUID
-	ErrorMessage         *string
-	CreatedAt            time.Time
+	ID                 uuid.UUID
+	OrganizationID     uuid.UUID
+	ConnectionID       uuid.UUID
+	Provider           string
+	DeliveryID         string
+	EventType          string
+	RepositoryFullName string
+	Branch             string
+	CommitSHA          string
+	Status             string
+	DeploymentIDs      []uuid.UUID
+	ErrorMessage       *string
+	CreatedAt          time.Time
 }
 
 type CreateConnectionInput struct {
@@ -108,14 +108,14 @@ type UpsertRepositoryInput struct {
 
 // PushEvent is a normalized provider push webhook.
 type PushEvent struct {
-	DeliveryID           string
-	EventType            string
-	RepositoryFullName   string
-	CloneURL             string
-	HTMLURL              string
-	Branch               string
-	CommitSHA            string
-	Deleted              bool
+	DeliveryID         string
+	EventType          string
+	RepositoryFullName string
+	CloneURL           string
+	HTMLURL            string
+	Branch             string
+	CommitSHA          string
+	Deleted            bool
 }
 
 type AuditMeta struct {

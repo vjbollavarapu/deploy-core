@@ -1,4 +1,4 @@
-import { Boxes, Database, Globe, KeyRound, Rocket } from 'lucide-react'
+import { Boxes, Database, Globe, Rocket } from 'lucide-react'
 import { MetricCard } from '@/components/platform/metric-card'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -42,16 +42,20 @@ export function ProjectOverview({
             <CardTitle>Environment health</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
-            {project.environments.map((env) => (
-              <Link
-                key={env}
-                href={`/projects/${project.slug}/environments/${environmentSlug(env)}`}
-                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40"
-              >
-                <EnvironmentBadge environment={env} />
-                <StatusBadge status={environmentHealth[env] ?? 'unknown'} />
-              </Link>
-            ))}
+            {project.environments.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No environments configured yet.</p>
+            ) : (
+              project.environments.map((env) => (
+                <Link
+                  key={env}
+                  href={`/projects/${project.slug}/environments/${environmentSlug(env)}`}
+                  className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40"
+                >
+                  <EnvironmentBadge environment={env} />
+                  <StatusBadge status={environmentHealth[env] ?? 'unknown'} />
+                </Link>
+              ))
+            )}
           </CardContent>
         </Card>
 
@@ -80,29 +84,35 @@ export function ProjectOverview({
       <Card size="sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <KeyRound className="size-3.5 text-muted-foreground" aria-hidden />
+            <Rocket className="size-3.5 text-muted-foreground" aria-hidden />
             Recent applications
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <ul className="divide-y divide-border">
-            {recentApplications.slice(0, 5).map((app) => (
-              <li key={app.id}>
-                <Link
-                  href={`/applications/${app.id}`}
-                  className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-muted/40"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{app.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {app.environment} · {app.runtime}
-                    </p>
-                  </div>
-                  <StatusBadge status={app.status} />
-                </Link>
-              </li>
-            ))}
-          </ul>
+          {recentApplications.length === 0 ? (
+            <p className="px-4 py-6 text-center text-xs text-muted-foreground">
+              No applications deployed in this project yet.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {recentApplications.slice(0, 5).map((app) => (
+                <li key={app.id}>
+                  <Link
+                    href={`/applications/${app.id}`}
+                    className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-muted/40"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{app.name}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {app.environment} · {app.runtime}
+                      </p>
+                    </div>
+                    <StatusBadge status={app.status} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </CardContent>
       </Card>
     </div>

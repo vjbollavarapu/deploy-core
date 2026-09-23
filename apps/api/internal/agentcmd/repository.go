@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -24,6 +25,9 @@ type Repository interface {
 	ListForServer(ctx context.Context, orgID, serverID uuid.UUID, limit, offset int) ([]Command, int64, error)
 	ListPendingForServer(ctx context.Context, serverID uuid.UUID, limit int, now time.Time) ([]Command, error)
 	ExpirePending(ctx context.Context, serverID uuid.UUID, now time.Time) error
+	// ExpireStaleInFlight marks accepted/running commands past expires_at as failed
+	// and returns the updated rows so completion hooks can run.
+	ExpireStaleInFlight(ctx context.Context, serverID uuid.UUID, now time.Time) ([]Command, error)
 	UpdateStatus(ctx context.Context, id, serverID uuid.UUID, fromStatuses []string, toStatus string, result map[string]any, errCode, errMsg *string, at time.Time) (Command, error)
 	Cancel(ctx context.Context, id, orgID uuid.UUID, at time.Time) (Command, error)
 }
@@ -139,19 +143,54 @@ func (r *PostgresRepository) ListPendingForServer(ctx context.Context, serverID 
 func (r *PostgresRepository) ExpirePending(ctx context.Context, serverID uuid.UUID, now time.Time) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE agent_commands
-		SET status = 'expired', finished_at = $2
+		SET status = 'expired', finished_at = $2,
+		    error_code = COALESCE(error_code, 'COMMAND_EXPIRED'),
+		    error_message = COALESCE(error_message, 'command expired before acceptance')
 		WHERE server_id = $1 AND status = 'pending' AND expires_at <= $2`, serverID, now)
 	return err
+}
+
+// ExpireStaleInFlight fails accepted/running commands whose expires_at has passed.
+// Without this, Agent disappearance can leave commands RUNNING indefinitely (I8).
+func (r *PostgresRepository) ExpireStaleInFlight(ctx context.Context, serverID uuid.UUID, now time.Time) ([]Command, error) {
+	code := "COMMAND_EXPIRED"
+	msg := "command expired while accepted or running"
+	rows, err := r.pool.Query(ctx, `
+		UPDATE agent_commands
+		SET status = 'failed',
+		    finished_at = $2,
+		    error_code = $3,
+		    error_message = $4
+		WHERE server_id = $1
+		  AND status IN ('accepted', 'running')
+		  AND expires_at <= $2
+		RETURNING id, organization_id, server_id, operation, schema_version, payload, status,
+		          issued_at, expires_at, request_id, correlation_id, issued_by,
+		          result, error_code, error_message, accepted_at, started_at, finished_at,
+		          created_at, updated_at`, serverID, now, code, msg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Command
+	for rows.Next() {
+		cmd, err := scanCommand(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cmd)
+	}
+	return out, rows.Err()
 }
 
 func (r *PostgresRepository) UpdateStatus(ctx context.Context, id, serverID uuid.UUID, fromStatuses []string, toStatus string, result map[string]any, errCode, errMsg *string, at time.Time) (Command, error) {
 	var acceptedAt, startedAt, finishedAt *time.Time
 	switch toStatus {
-	case StatusAccepted:
+	case protocol.StatusAccepted:
 		acceptedAt = &at
-	case StatusRunning:
+	case protocol.StatusRunning:
 		startedAt = &at
-	case StatusCompleted, StatusFailed:
+	case protocol.StatusCompleted, protocol.StatusFailed:
 		finishedAt = &at
 	}
 

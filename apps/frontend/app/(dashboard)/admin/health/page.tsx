@@ -1,6 +1,9 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { HealthChecksTable } from '@/components/deploycore/health-checks/health-checks-table'
-import { healthChecks } from '@/lib/mock-data'
+import { healthChecks as rawHealthChecks } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const healthChecks = getDemoFixtures(rawHealthChecks)
 
 export default function AdminHealthPage() {
   return (

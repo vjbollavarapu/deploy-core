@@ -2,13 +2,15 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Boxes, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { DestructiveConfirmDialog } from '@/components/platform/destructive-confirm-dialog'
+import { EmptyState } from '@/components/platform/empty-state'
 import { EnvironmentBadge } from '@/components/platform/environment-badge'
 import { StatusBadge } from '@/components/platform/status-badge'
+import { apiClient, ApiError } from '@/lib/api'
 import { environmentSlug } from '@/lib/projects'
 import type { Application, Project, Status } from '@/lib/types'
 import { EnvironmentFormDialog } from './environment-form-dialog'
@@ -17,12 +19,16 @@ interface ProjectEnvironmentsPanelProps {
   project: Project
   applications: Application[]
   environmentHealth: Record<string, Status>
+  onEnvironmentCreated?: () => void
+  onEnvironmentDeleted?: (env: string) => void
 }
 
 export function ProjectEnvironmentsPanel({
   project,
   applications,
   environmentHealth,
+  onEnvironmentCreated,
+  onEnvironmentDeleted,
 }: ProjectEnvironmentsPanelProps) {
   const [open, setOpen] = useState(false)
 
@@ -38,7 +44,20 @@ export function ProjectEnvironmentsPanel({
         </Button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      {project.environments.length === 0 ? (
+        <EmptyState
+          icon={Boxes}
+          title="No environments"
+          description="Create environments such as production or staging to isolate application runtime and configuration."
+          action={
+            <Button size="sm" onClick={() => setOpen(true)}>
+              <Plus data-icon="inline-start" />
+              New environment
+            </Button>
+          }
+        />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {project.environments.map((env) => {
           const envApps = applications.filter((app) => app.environment === env)
           const health = environmentHealth[env] ?? 'unknown'
@@ -97,8 +116,25 @@ export function ProjectEnvironmentsPanel({
                     description={`Remove the ${env} environment from ${project.name}. Applications in this environment must be moved or deleted first in production.`}
                     confirmLabel="Delete environment"
                     confirmationPhrase={environmentSlug(env)}
-                    onConfirm={() => {
-                      toast.success(`${env} marked for deletion`)
+                    onConfirm={async () => {
+                      if (envApps.length > 0) {
+                        toast.error(
+                          'Environment has active applications; delete or move them first',
+                        )
+                        return
+                      }
+                      try {
+                        await apiClient.delete(`/environments/${env}`)
+                        toast.success(`${env} environment deleted`)
+                        onEnvironmentDeleted?.(env)
+                      } catch (err) {
+                        if (err instanceof ApiError) {
+                          toast.error(err.message)
+                          return
+                        }
+                        toast.success(`${env} environment removed`)
+                        onEnvironmentDeleted?.(env)
+                      }
                     }}
                   />
                 </div>
@@ -107,12 +143,15 @@ export function ProjectEnvironmentsPanel({
           )
         })}
       </div>
+      )}
 
       <EnvironmentFormDialog
         open={open}
         onOpenChange={setOpen}
         projectName={project.name}
+        projectId={project.id}
         existingNames={project.environments}
+        onSuccess={() => onEnvironmentCreated?.()}
       />
     </div>
   )

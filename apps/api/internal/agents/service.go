@@ -29,14 +29,14 @@ type ServiceConfig struct {
 }
 
 type Service struct {
-	repo   Repository
-	authz  *rbac.Authorizer
-	audit  *audit.Writer
-	log    *slog.Logger
-	cfg     ServiceConfig
-	now     func() time.Time
-	metrics MetricsRecorder
-	notify  NotificationEmitter
+	repo     Repository
+	authz    *rbac.Authorizer
+	audit    *audit.Writer
+	log      *slog.Logger
+	cfg      ServiceConfig
+	now      func() time.Time
+	metrics  MetricsRecorder
+	notify   NotificationEmitter
 	webhooks WebhookEmitter
 }
 
@@ -343,16 +343,19 @@ func deriveStatus(in HeartbeatInput, maintenance bool, current string) string {
 		return "DISABLED"
 	}
 	docker := strings.ToLower(strings.TrimSpace(in.DockerStatus))
-	if docker == "" || docker == "ok" || docker == "running" || docker == "healthy" {
+	// Accept agent wire values ("ONLINE") and protocol examples ("running"/"ok"/"healthy").
+	switch docker {
+	case "", "ok", "running", "healthy", "online":
 		if in.CPUPercent != nil && *in.CPUPercent >= 95 {
 			return "DEGRADED"
 		}
 		return "ONLINE"
-	}
-	if docker == "degraded" || docker == "warn" || docker == "warning" {
+	case "degraded", "warn", "warning":
+		return "DEGRADED"
+	default:
+		// offline / error / unavailable / unknown → agent reachable but not fully healthy
 		return "DEGRADED"
 	}
-	return "DEGRADED"
 }
 
 func (s *Service) writeAudit(ctx context.Context, orgID, actorID *uuid.UUID, action, resourceType, resourceID string, meta AuditMeta, before, after map[string]any) {

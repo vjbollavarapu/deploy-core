@@ -6,7 +6,10 @@ import { PageContainer } from '@/components/platform/page-container'
 import { ResourceHeader } from '@/components/platform/resource-header'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { RevisionCompare } from '@/components/deploycore/revisions/revision-compare'
-import { revisions } from '@/lib/mock-data'
+import { revisions as rawRevisions } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const revisions = getDemoFixtures(rawRevisions)
 import { findRevision, formatRevisionNumber } from '@/lib/revisions'
 
 export default async function RevisionComparePage({

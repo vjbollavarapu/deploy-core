@@ -20,6 +20,7 @@ type Repository interface {
 	GetApplication(ctx context.Context, appID uuid.UUID) (ApplicationRef, error)
 	Create(ctx context.Context, d Domain) (Domain, error)
 	Get(ctx context.Context, id uuid.UUID) (Domain, error)
+	List(ctx context.Context, orgID uuid.UUID) ([]Domain, error)
 	ListByApplication(ctx context.Context, appID uuid.UUID) ([]Domain, error)
 	Update(ctx context.Context, d Domain) (Domain, error)
 	ClearPrimary(ctx context.Context, applicationID, exceptID uuid.UUID) error
@@ -100,6 +101,28 @@ func (r *PostgresRepository) Get(ctx context.Context, id uuid.UUID) (Domain, err
 		return Domain{}, ErrNotFound
 	}
 	return d, err
+}
+
+func (r *PostgresRepository) List(ctx context.Context, orgID uuid.UUID) ([]Domain, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, organization_id, application_id, environment_id, hostname, internal_port,
+		       is_primary, force_https, dns_status, tls_status, created_at, updated_at
+		FROM domains
+		WHERE organization_id = $1 AND deleted_at IS NULL
+		ORDER BY created_at DESC`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Domain
+	for rows.Next() {
+		d, err := scanDomain(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 func (r *PostgresRepository) ListByApplication(ctx context.Context, appID uuid.UUID) ([]Domain, error) {

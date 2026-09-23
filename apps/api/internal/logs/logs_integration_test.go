@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,6 +87,32 @@ func testServer(t *testing.T, pool *pgxpool.Pool) *server.Server {
 	return server.New(cfg, log, pool)
 }
 
+type safeRecorder struct {
+	*httptest.ResponseRecorder
+	mu sync.Mutex
+}
+
+func (r *safeRecorder) Write(b []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ResponseRecorder.Write(b)
+}
+
+func (r *safeRecorder) Flush() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ResponseRecorder.Flush()
+}
+
+func (r *safeRecorder) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.Body == nil {
+		return ""
+	}
+	return r.Body.String()
+}
+
 func TestLogIngestAndSnapshot(t *testing.T) {
 	pool := testPool(t)
 	srv := testServer(t, pool)
@@ -140,7 +167,7 @@ func TestLogIngestAndSnapshot(t *testing.T) {
 	defer cancel()
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/applications/"+appID+"/logs?kind=runtime&follow=true&cursor=", nil)
 	req.Header.Set("Authorization", "Bearer "+ownerTok)
-	w := httptest.NewRecorder()
+	w := &safeRecorder{ResponseRecorder: httptest.NewRecorder()}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -149,15 +176,15 @@ func TestLogIngestAndSnapshot(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(w.Body.String(), "event: ready") {
+		if strings.Contains(w.String(), "event: ready") {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if !strings.Contains(w.Body.String(), "event: ready") {
+	if !strings.Contains(w.String(), "event: ready") {
 		cancel()
 		<-done
-		t.Fatalf("missing ready event: %s", w.Body.String())
+		t.Fatalf("missing ready event: %s", w.String())
 	}
 
 	live, _ := json.Marshal(map[string]any{
@@ -173,15 +200,15 @@ func TestLogIngestAndSnapshot(t *testing.T) {
 
 	deadline = time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(w.Body.String(), "live-line") {
+		if strings.Contains(w.String(), "live-line") {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	cancel()
 	<-done
-	if !strings.Contains(w.Body.String(), "live-line") {
-		t.Fatalf("SSE missing live line: %s", w.Body.String())
+	if !strings.Contains(w.String(), "live-line") {
+		t.Fatalf("SSE missing live line: %s", w.String())
 	}
 }
 

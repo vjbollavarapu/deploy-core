@@ -1,15 +1,19 @@
 import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { GitBranch, RotateCcw } from 'lucide-react'
+import { GitBranch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { ApplicationRedeployButton } from '@/components/deploycore/applications/application-redeploy-button'
 import { ApplicationSubnav } from '@/components/platform/application-subnav'
 import { EnvironmentBadge } from '@/components/platform/environment-badge'
 import { PageContainer } from '@/components/platform/page-container'
 import { ResourceHeader } from '@/components/platform/resource-header'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { findApplication, getPrimaryDomain } from '@/lib/applications'
-import { projects } from '@/lib/mock-data'
+import { projects as rawProjects } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const projects = getDemoFixtures(rawProjects)
 
 export default async function ApplicationLayout({
   children,
@@ -70,10 +74,10 @@ export default async function ApplicationLayout({
               <GitBranch data-icon="inline-start" />
               Deployments
             </Button>
-            <Button size="sm">
-              <RotateCcw data-icon="inline-start" />
-              Redeploy
-            </Button>
+            <ApplicationRedeployButton
+              applicationId={application.id}
+              applicationName={application.name}
+            />
           </div>
         }
       />

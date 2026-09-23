@@ -22,50 +22,52 @@ export function BackupsTable({ jobs, runs }: BackupsTableProps) {
 
   return (
     <>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Database</TableHead>
-            <TableHead>Policy</TableHead>
-            <TableHead>Destination</TableHead>
-            <TableHead>Last success</TableHead>
-            <TableHead>Next run</TableHead>
-            <TableHead>Retention</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="w-8" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {jobs.map((job) => (
-            <TableRow key={job.id} className="cursor-pointer" onClick={() => setActive(job)}>
-              <TableCell>
-                <Link
-                  href={`/databases/${job.databaseId}/backups`}
-                  className="font-medium text-foreground hover:underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {job.database}
-                </Link>
-              </TableCell>
-              <TableCell>
-                <Badge variant="secondary" className="text-[10px]">
-                  {job.policy}
-                </Badge>
-              </TableCell>
-              <TableCell className="font-mono text-xs text-muted-foreground">{job.destination}</TableCell>
-              <TableCell className="text-sm text-muted-foreground">{job.lastSuccess}</TableCell>
-              <TableCell className="text-sm text-muted-foreground">{job.nextRun}</TableCell>
-              <TableCell className="text-sm text-muted-foreground">{job.retention}</TableCell>
-              <TableCell>
-                <StatusBadge status={job.status} showDot />
-              </TableCell>
-              <TableCell>
-                <ChevronRight data-icon className="size-4 text-muted-foreground" />
-              </TableCell>
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Database</TableHead>
+              <TableHead>Policy</TableHead>
+              <TableHead>Destination</TableHead>
+              <TableHead>Last success</TableHead>
+              <TableHead>Next run</TableHead>
+              <TableHead>Retention</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="w-8" />
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {jobs.map((job) => (
+              <TableRow key={job.id} className="cursor-pointer" onClick={() => setActive(job)}>
+                <TableCell>
+                  <Link
+                    href={`/databases/${job.databaseId}/backups`}
+                    className="font-medium text-foreground hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {job.database}
+                  </Link>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="secondary" className="text-[10px]">
+                    {job.policy}
+                  </Badge>
+                </TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">{job.destination}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{job.lastSuccess}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{job.nextRun}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{job.retention}</TableCell>
+                <TableCell>
+                  <StatusBadge status={job.status} showDot />
+                </TableCell>
+                <TableCell>
+                  <ChevronRight data-icon className="size-4 text-muted-foreground" />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
 
       <Sheet open={!!active} onOpenChange={(open) => !open && setActive(null)}>
         <SheetContent className="sm:max-w-lg">

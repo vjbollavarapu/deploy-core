@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	KindBuild             = "build"
-	KindRuntime           = "runtime"
-	KindDeploymentEvents  = "deployment_events"
+	KindBuild            = "build"
+	KindRuntime          = "runtime"
+	KindDeploymentEvents = "deployment_events"
 )
 
 const (
@@ -20,16 +20,16 @@ const (
 
 // Entry is one log line or deployment event in the streaming contract.
 type Entry struct {
-	Cursor         string    `json:"cursor"`
-	Timestamp      time.Time `json:"timestamp"`
-	OrganizationID uuid.UUID `json:"organizationId"`
+	Cursor         string     `json:"cursor"`
+	Timestamp      time.Time  `json:"timestamp"`
+	OrganizationID uuid.UUID  `json:"organizationId"`
 	ApplicationID  *uuid.UUID `json:"applicationId,omitempty"`
 	DeploymentID   *uuid.UUID `json:"deploymentId,omitempty"`
 	RevisionID     *uuid.UUID `json:"revisionId,omitempty"`
-	Kind           string    `json:"kind"`
-	Stream         string    `json:"stream"` // stdout|stderr|system
-	Message        string    `json:"message"`
-	Sequence       uint64    `json:"sequence"`
+	Kind           string     `json:"kind"`
+	Stream         string     `json:"stream"` // stdout|stderr|system
+	Message        string     `json:"message"`
+	Sequence       uint64     `json:"sequence"`
 }
 
 type Query struct {

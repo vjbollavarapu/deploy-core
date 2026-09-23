@@ -1,7 +1,6 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { GitBranch, GitCommit, RotateCcw, Server, User, XCircle } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { GitBranch, GitCommit, Server, User } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { PageContainer } from '@/components/platform/page-container'
@@ -12,11 +11,14 @@ import { CodeBlock } from '@/components/platform/code-block'
 import { DeploymentPipeline } from '@/components/platform/deployment-pipeline'
 import { DeploymentEventTimeline } from '@/components/platform/deployment-event-timeline'
 import { BuildLogViewer } from '@/components/platform/build-log-viewer'
+import { DeploymentActions } from '@/components/deploycore/deployments/deployment-actions'
 import {
   DEPLOYMENT_FAILURE_LABELS,
   DEPLOYMENT_PHASE_LABELS,
+  findDeployment,
 } from '@/lib/deployments'
-import { deployments, generateLogLines } from '@/lib/mock-data'
+import { generateLogLines } from '@/lib/mock-data'
+import { isDemoModeEnabled } from '@/lib/mock-isolation'
 
 export default async function DeploymentDetailPage({
   params,
@@ -24,10 +26,10 @@ export default async function DeploymentDetailPage({
   params: Promise<{ deploymentId: string }>
 }) {
   const { deploymentId } = await params
-  const deployment = deployments.find((d) => d.id === deploymentId)
+  const deployment = findDeployment(deploymentId)
   if (!deployment) notFound()
 
-  const logs = generateLogLines(deployment.application, 160)
+  const logs = isDemoModeEnabled() ? generateLogLines(deployment.application, 160) : []
   const phaseLabel = deployment.failureReason
     ? DEPLOYMENT_FAILURE_LABELS[deployment.failureReason]
     : DEPLOYMENT_PHASE_LABELS[deployment.phase]
@@ -65,22 +67,7 @@ export default async function DeploymentDetailPage({
             <span>{phaseLabel}</span>
           </div>
         }
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {(deployment.status === 'deploying' ||
-              deployment.status === 'queued' ||
-              deployment.status === 'pending') && (
-              <Button size="sm" variant="outline">
-                <XCircle data-icon="inline-start" />
-                Cancel
-              </Button>
-            )}
-            <Button size="sm">
-              <RotateCcw data-icon="inline-start" />
-              Redeploy
-            </Button>
-          </div>
-        }
+        actions={<DeploymentActions deployment={deployment} />}
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -167,22 +154,20 @@ export default async function DeploymentDetailPage({
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Build logs</CardTitle>
-            <CardDescription>
+        <div className="flex flex-col gap-2 lg:col-span-2">
+          <div className="flex flex-col gap-0.5 px-0.5">
+            <h3 className="text-sm font-medium text-foreground">Build logs</h3>
+            <p className="text-xs text-muted-foreground">
               Streaming-ready build and runtime output
               {isActive ? ' (live)' : ''}.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <BuildLogViewer
-              lines={logs}
-              streaming={isActive}
-              title={`${deployment.application}-deploy-${deployment.number}`}
-            />
-          </CardContent>
-        </Card>
+            </p>
+          </div>
+          <BuildLogViewer
+            lines={logs}
+            streaming={isActive}
+            title={`${deployment.application}-deploy-${deployment.number}`}
+          />
+        </div>
       </div>
     </PageContainer>
   )

@@ -1,7 +1,53 @@
 import type { Revision, RevisionEnvVarMeta } from '@/lib/types'
+import { allowSyntheticFallback } from '@/lib/mock-isolation'
+
+export type RevisionFilterId = 'all' | 'active' | 'healthy' | 'archived'
+
+export const REVISION_FILTERS: { id: RevisionFilterId; label: string }[] = [
+  { id: 'all', label: 'All revisions' },
+  { id: 'active', label: 'Active traffic' },
+  { id: 'healthy', label: 'Healthy' },
+  { id: 'archived', label: 'Archived' },
+]
+
+export function matchesRevisionFilter(rev: Revision, filter: RevisionFilterId): boolean {
+  switch (filter) {
+    case 'active':
+      return !rev.archived && rev.traffic > 0
+    case 'healthy':
+      return !rev.archived && rev.status === 'healthy'
+    case 'archived':
+      return Boolean(rev.archived)
+    case 'all':
+    default:
+      return true
+  }
+}
 
 export function findRevision(revisionId: string, revisions: Revision[]): Revision | undefined {
-  return revisions.find((r) => r.id === revisionId)
+  const direct = revisions.find(
+    (r) => r.id === revisionId || r.number === revisionId || formatRevisionNumber(r.number) === revisionId,
+  )
+  if (direct) return direct
+
+  // Dynamic fallback for valid UUID or rev-* identifier (only when demo mode is active)
+  if (allowSyntheticFallback() && revisionId && (revisionId.startsWith('rev-') || revisionId.includes('-') || /^\d+$/.test(revisionId))) {
+    const template = revisions[0]
+    if (template) {
+      const cleanNum = revisionId.replace(/^rev-/, '').slice(0, 5).padStart(5, '0')
+      return {
+        ...template,
+        id: revisionId,
+        number: cleanNum,
+        commit: revisionId.slice(0, 7),
+        commitMessage: `Revision snapshot for ${revisionId.slice(0, 8)}`,
+        traffic: 0,
+        archived: false,
+      }
+    }
+  }
+
+  return undefined
 }
 
 export function getRevisionsForApplication(

@@ -91,6 +91,23 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 	return d, nil
 }
 
+func (s *Service) List(ctx context.Context, actorID, orgID uuid.UUID) ([]Domain, error) {
+	if err := s.authz.RequirePermission(ctx, actorID, orgID, rbac.DomainRead); err != nil {
+		return nil, err
+	}
+	items, err := s.repo.List(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		app, err := s.repo.GetApplication(ctx, items[i].ApplicationID)
+		if err == nil {
+			items[i].Routing = BuildRoutingConfig(app.Slug, items[i])
+		}
+	}
+	return items, nil
+}
+
 func (s *Service) ListByApplication(ctx context.Context, actorID, appID uuid.UUID) ([]Domain, error) {
 	app, err := s.repo.GetApplication(ctx, appID)
 	if err != nil {

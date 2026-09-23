@@ -42,7 +42,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	if err := rbac.EnsureSeeded(ctx, pool); err != nil {
 		t.Fatalf("rbac seed: %v", err)
 	}
-	_, _ = pool.Exec(ctx, `
+	_, err = pool.Exec(ctx, `
 		DELETE FROM notification_deliveries;
 		DELETE FROM notification_policies;
 		DELETE FROM notification_channels;
@@ -58,6 +58,16 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		DELETE FROM sessions;
 		DELETE FROM organizations;
 		DELETE FROM users;`)
+	if err != nil {
+		// Shared TEST_DATABASE_URL: prior packages may leave FK rows. Force-clear jobs at minimum.
+		if _, jerr := pool.Exec(ctx, `DELETE FROM jobs`); jerr != nil {
+			t.Fatalf("cleanup jobs: %v (batch: %v)", jerr, err)
+		}
+	}
+	// Always ensure no leased/queued jobs remain for Claim isolation.
+	if _, err := pool.Exec(ctx, `DELETE FROM jobs`); err != nil {
+		t.Fatalf("cleanup jobs: %v", err)
+	}
 	return pool
 }
 
@@ -192,6 +202,23 @@ func TestNotificationChannelPolicyEmitAndDeliver(t *testing.T) {
 	}
 	if job.ID == uuid.Nil {
 		t.Fatal("expected NOTIFICATION_DELIVERY job")
+	}
+	wantID, parseErr := uuid.Parse(*d.JobID)
+	if parseErr != nil {
+		t.Fatalf("delivery jobId: %v", parseErr)
+	}
+	// Shared test DB may contain leftover DEPLOYMENT_EXECUTION rows; drain until ours.
+	for attempt := 0; job.ID != wantID && attempt < 32; attempt++ {
+		if job.Type != jobs.TypeNotificationDelivery {
+			_, _ = queue.Complete(context.Background(), job.ID, "test-worker")
+		}
+		job, err = queue.Claim(context.Background(), "test-worker", 30*time.Second)
+		if err != nil {
+			t.Fatalf("claim retry: %v", err)
+		}
+	}
+	if job.ID != wantID {
+		t.Fatalf("claimed unexpected job type=%s id=%s (wanted NOTIFICATION_DELIVERY %s)", job.Type, job.ID, *d.JobID)
 	}
 	if err := svc.ProcessDeliveryJob(context.Background(), job); err != nil {
 		t.Fatalf("process: %v", err)

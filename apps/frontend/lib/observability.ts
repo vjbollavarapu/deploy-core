@@ -1,14 +1,24 @@
 import {
-  activityFeed,
-  applications,
-  certificateWarnings,
-  containers,
-  databases,
-  deployments,
+  activityFeed as rawActivityFeed,
+  applications as rawApplications,
+  certificateWarnings as rawCertificateWarnings,
+  containers as rawContainers,
+  databases as rawDatabases,
+  deployments as rawDeployments,
   generateLogLines,
-  incidents,
-  servers,
+  incidents as rawIncidents,
+  servers as rawServers,
 } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const applications = getDemoFixtures(rawApplications)
+const containers = getDemoFixtures(rawContainers)
+const databases = getDemoFixtures(rawDatabases)
+const servers = getDemoFixtures(rawServers)
+const activityFeed = getDemoFixtures(rawActivityFeed)
+const incidents = getDemoFixtures(rawIncidents)
+const certificateWarnings = getDemoFixtures(rawCertificateWarnings)
+const deployments = getDemoFixtures(rawDeployments)
 import type {
   Application,
   Container,

@@ -4,16 +4,55 @@ export type EnvVarKind = 'inherited' | 'overridden' | 'application-specific'
 
 export const ENV_SCOPES = ['Organization', 'Project', 'Environment', 'Application'] as const
 
+export const SCOPE_HIERARCHY: Record<EnvVarEntry['scope'], number> = {
+  Organization: 0,
+  Project: 1,
+  Environment: 2,
+  Application: 3,
+}
+
 export const ENV_VAR_KIND_LABELS: Record<EnvVarKind, string> = {
   inherited: 'Inherited',
   overridden: 'Overridden',
-  'application-specific': 'Application',
+  'application-specific': 'Application-specific',
 }
 
 export function getEnvVarKind(entry: EnvVarEntry): EnvVarKind {
-  if (entry.scope === 'Application') return 'application-specific'
   if (entry.overridden) return 'overridden'
+  if (entry.scope === 'Application') return 'application-specific'
   return 'inherited'
+}
+
+/**
+ * Recalculates overridden flags across variable hierarchy:
+ * Organization (0) → Project (1) → Environment (2) → Application (3)
+ * If a variable key exists in a parent scope, the child variable is marked overridden.
+ */
+export function detectOverrides(variables: EnvVarEntry[]): EnvVarEntry[] {
+  const keyScopes = new Map<string, Set<EnvVarEntry['scope']>>()
+  for (const v of variables) {
+    let scopes = keyScopes.get(v.key)
+    if (!scopes) {
+      scopes = new Set()
+      keyScopes.set(v.key, scopes)
+    }
+    scopes.add(v.scope)
+  }
+
+  return variables.map((entry) => {
+    const scopes = keyScopes.get(entry.key)
+    if (!scopes || scopes.size <= 1) {
+      return { ...entry, overridden: false }
+    }
+    const entryRank = SCOPE_HIERARCHY[entry.scope] ?? 0
+    const hasParentScope = Array.from(scopes).some(
+      (s) => (SCOPE_HIERARCHY[s] ?? 0) < entryRank,
+    )
+    return {
+      ...entry,
+      overridden: hasParentScope,
+    }
+  })
 }
 
 export function parseEnvText(text: string): { key: string; value: string; secret: boolean }[] {
@@ -36,7 +75,7 @@ export function parseEnvText(text: string): { key: string; value: string; secret
     rows.push({
       key,
       value,
-      secret: /SECRET|PASSWORD|TOKEN|KEY|CREDENTIAL/i.test(key),
+      secret: /SECRET|PASSWORD|TOKEN|KEY|CREDENTIAL|AUTH/i.test(key),
     })
   }
   return rows

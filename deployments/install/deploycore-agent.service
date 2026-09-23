@@ -1,0 +1,47 @@
+[Unit]
+Description=DeployCore Server Agent
+Documentation=https://github.com/deploycore/deploy-core
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=deploycore
+Group=deploycore
+# docker.sock access via supplementary docker group membership
+SupplementaryGroups=docker
+
+# Agent configuration is environment-based (see apps/agent/internal/config).
+# Do not put registration tokens or credentials on ExecStart.
+EnvironmentFile=-/etc/deploycore-agent/agent.env
+# Optional one-time bootstrap; Agent removes this file after successful registration.
+EnvironmentFile=-/etc/deploycore-agent/registration.env
+ExecStart=/usr/local/bin/deploycore-agent
+
+WorkingDirectory=/var/lib/deploycore-agent
+
+Restart=always
+RestartSec=5s
+# Allow Agent Stop() (SIGTERM) to drain before systemd escalates to SIGKILL
+TimeoutStopSec=45
+KillSignal=SIGTERM
+
+LimitNOFILE=65536
+
+# Security & Sandboxing (compatible with Docker socket + managed FS)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+# Authorized Writable Paths
+ReadWritePaths=/var/lib/deploycore-agent /var/log/deploycore-agent /run/deploycore-agent /etc/deploycore-agent
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deploycore-agent
+
+[Install]
+WantedBy=multi-user.target

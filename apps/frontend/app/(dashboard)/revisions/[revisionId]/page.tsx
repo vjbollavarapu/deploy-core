@@ -10,7 +10,10 @@ import { EnvironmentBadge } from '@/components/platform/environment-badge'
 import { CodeBlock } from '@/components/platform/code-block'
 import { DetailList } from '@/components/platform/detail-list'
 import { RevisionDetailActions } from '@/components/deploycore/revisions/revision-detail-actions'
-import { revisions } from '@/lib/mock-data'
+import { revisions as rawRevisions } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const revisions = getDemoFixtures(rawRevisions)
 import {
   findRevision,
   formatRevisionNumber,

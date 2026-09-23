@@ -16,6 +16,7 @@ import (
 	"github.com/deploycore/deploy-core/apps/api/pkg/apierror"
 	"github.com/deploycore/deploy-core/apps/api/pkg/crypto"
 	"github.com/deploycore/deploy-core/apps/api/pkg/requestid"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 )
 
@@ -209,8 +210,8 @@ func (s *Service) issueProvision(ctx context.Context, d Database, issuedBy *uuid
 	return s.commands.Create(ctx, agentcmd.Command{
 		OrganizationID: d.OrganizationID,
 		ServerID:       d.ServerID,
-		Operation:      agentcmd.OpProvisionDatabase,
-		SchemaVersion:  agentcmd.SchemaVersion,
+		Operation:      protocol.OpProvisionDatabase,
+		SchemaVersion:  protocol.SchemaVersion,
 		Payload:        payload,
 		IssuedAt:       now,
 		ExpiresAt:      now.Add(30 * time.Minute),
@@ -298,13 +299,11 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateIn
 		after.BackupPolicy = in.BackupPolicy
 	}
 	if in.Status != nil {
-		st := strings.ToUpper(strings.TrimSpace(*in.Status))
-		switch st {
-		case StatusStopped, StatusRunning, StatusDegraded:
-			after.Status = st
-		default:
-			return Database{}, apierror.Validation("status cannot be set to that value via update", map[string]any{"status": st})
-		}
+		// R16: PATCH status is CP-only and must not imply runtime stop/start succeeded.
+		return Database{}, apierror.Validation(
+			"database status cannot be changed via PATCH; use dedicated stop/start operations that issue Agent commands",
+			map[string]any{"field": "status"},
+		)
 	}
 
 	var cred *credentialBlob
@@ -340,27 +339,42 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateIn
 	return updated, nil
 }
 
-func (s *Service) Delete(ctx context.Context, actorID, id uuid.UUID, meta AuditMeta) error {
+func (s *Service) Delete(ctx context.Context, actorID, id uuid.UUID, meta AuditMeta) (DeleteResult, error) {
 	d, _, err := s.repo.Get(ctx, id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return apierror.NotFoundCode(apierror.CodeDatabaseNotFound, "database not found")
+			return DeleteResult{}, apierror.NotFoundCode(apierror.CodeDatabaseNotFound, "database not found")
 		}
-		return err
+		return DeleteResult{}, err
 	}
 	if err := s.authz.RequirePermission(ctx, actorID, d.OrganizationID, rbac.DatabaseUpdate); err != nil {
-		return err
+		return DeleteResult{}, err
 	}
-	// Soft-delete control-plane record only. Volume remains because volume_protected
-	// and we never cascade-delete storage when the container/record goes away.
+	// Soft-delete control-plane record only. Does NOT stop the Agent-managed
+	// container or delete protected volumes (R15).
 	if err := s.repo.SoftDelete(ctx, id, s.now().UTC()); err != nil {
-		return err
+		return DeleteResult{}, err
 	}
 	s.writeAudit(ctx, &d.OrganizationID, &actorID, "database.delete", "database", id.String(), meta,
 		map[string]any{"name": d.Name, "storageVolumeName": d.StorageVolumeName, "volumeProtected": d.VolumeProtected},
-		map[string]any{"status": StatusDeleted, "volumeDeleted": false},
+		map[string]any{"status": StatusDeleted, "volumeDeleted": false, "runtimeStopped": false},
 	)
-	return nil
+	return DeleteResult{
+		ID:             id,
+		SoftDeleted:    true,
+		RuntimeStopped: false,
+		VolumeDeleted:  false,
+		Message:        "control-plane record soft-deleted; managed container was not stopped and volume was not deleted",
+	}, nil
+}
+
+// DeleteResult describes the truthful outcome of a database delete request.
+type DeleteResult struct {
+	ID             uuid.UUID
+	SoftDeleted    bool
+	RuntimeStopped bool
+	VolumeDeleted  bool
+	Message        string
 }
 
 // BootstrapForAgent returns provision secrets for the owning agent. Password is
@@ -402,7 +416,7 @@ func (s *Service) BootstrapForAgent(ctx context.Context, agent agents.Agent, id 
 
 // HandleCommandCompletion is wired from agentcmd when PROVISION_DATABASE finishes.
 func (s *Service) HandleCommandCompletion(ctx context.Context, cmd agentcmd.Command) error {
-	if cmd.Operation != agentcmd.OpProvisionDatabase {
+	if cmd.Operation != protocol.OpProvisionDatabase {
 		return nil
 	}
 	dbIDRaw, _ := cmd.Payload["databaseId"].(string)
@@ -419,7 +433,7 @@ func (s *Service) HandleCommandCompletion(ctx context.Context, cmd agentcmd.Comm
 	}
 
 	switch cmd.Status {
-	case agentcmd.StatusCompleted:
+	case protocol.StatusCompleted:
 		var runtimeID *string
 		if cmd.Result != nil {
 			if v, ok := cmd.Result["containerRuntimeId"].(string); ok && strings.TrimSpace(v) != "" {
@@ -428,11 +442,16 @@ func (s *Service) HandleCommandCompletion(ctx context.Context, cmd agentcmd.Comm
 			} else if v, ok := cmd.Result["containerId"].(string); ok && strings.TrimSpace(v) != "" {
 				v = strings.TrimSpace(v)
 				runtimeID = &v
+			} else if nested, ok := cmd.Result["database"].(map[string]any); ok {
+				if v, ok := nested["containerId"].(string); ok && strings.TrimSpace(v) != "" {
+					v = strings.TrimSpace(v)
+					runtimeID = &v
+				}
 			}
 		}
 		_, err = s.repo.SetProvisionState(ctx, dbID, StatusRunning, &cmd.ID, runtimeID, "")
 		return err
-	case agentcmd.StatusFailed:
+	case protocol.StatusFailed:
 		msg := ""
 		if cmd.ErrorMessage != nil {
 			msg = *cmd.ErrorMessage

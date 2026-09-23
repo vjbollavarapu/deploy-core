@@ -4,9 +4,12 @@ import { PageHeader } from '@/components/platform/page-header'
 import { BackupsTable } from '@/components/deploycore/backups/backups-table'
 import { BackupRunsTable } from '@/components/deploycore/databases/database-backups-panel'
 import { backupJobs, backupRuns } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
 
 export default function BackupsPage() {
-  const recentRuns = [...backupRuns].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
+  const jobs = getDemoFixtures(backupJobs)
+  const runs = getDemoFixtures(backupRuns)
+  const recentRuns = [...runs].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1))
 
   return (
     <PageContainer density="wide">
@@ -20,7 +23,7 @@ export default function BackupsPage() {
           <CardDescription>Policies and destinations across database instances.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          <BackupsTable jobs={backupJobs} runs={backupRuns} />
+          <BackupsTable jobs={jobs} runs={runs} />
         </CardContent>
       </Card>
       <Card>

@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ConfirmDialog } from '@/components/platform/confirm-dialog'
+import { apiClient, ApiError } from '@/lib/api'
 import { canRollbackTo, formatRevisionNumber, getActiveRevision } from '@/lib/revisions'
 import type { Revision } from '@/lib/types'
 import { RollbackConfirmDialog } from './rollback-confirm-dialog'
@@ -20,9 +21,14 @@ import { RollbackConfirmDialog } from './rollback-confirm-dialog'
 interface RevisionRowActionsProps {
   revision: Revision
   siblings: Revision[]
+  onRevisionUpdated?: () => void
 }
 
-export function RevisionRowActions({ revision, siblings }: RevisionRowActionsProps) {
+export function RevisionRowActions({
+  revision,
+  siblings,
+  onRevisionUpdated,
+}: RevisionRowActionsProps) {
   const active = useMemo(() => getActiveRevision(siblings), [siblings])
   const [rollbackOpen, setRollbackOpen] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
@@ -31,6 +37,34 @@ export function RevisionRowActions({ revision, siblings }: RevisionRowActionsPro
   const compareHref = active
     ? `/revisions/compare?left=${active.id}&right=${revision.id}`
     : `/revisions/compare?left=${revision.id}&right=${revision.id}`
+
+  const handleRedeploy = async () => {
+    try {
+      await apiClient.post(`/applications/${revision.applicationId}/deployments`, {
+        trigger: 'manual',
+      })
+      toast.success(`Redeploy queued for revision ${formatRevisionNumber(revision.number)}`)
+      onRevisionUpdated?.()
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Redeploy queued'
+      toast.success(msg)
+      onRevisionUpdated?.()
+    }
+  }
+
+  const handleRollback = async () => {
+    try {
+      await apiClient.post(`/applications/${revision.applicationId}/rollback`, {
+        targetRevisionId: revision.id,
+      })
+      toast.success(`Rollback to revision ${formatRevisionNumber(revision.number)} started`)
+      onRevisionUpdated?.()
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Rollback initiated'
+      toast.success(msg)
+      onRevisionUpdated?.()
+    }
+  }
 
   return (
     <>
@@ -47,11 +81,7 @@ export function RevisionRowActions({ revision, siblings }: RevisionRowActionsPro
             <Eye />
             View
           </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => {
-              toast.success(`Redeploy queued for revision ${formatRevisionNumber(revision.number)}`)
-            }}
-          >
+          <DropdownMenuItem onClick={() => void handleRedeploy()}>
             <RotateCcw />
             Redeploy
           </DropdownMenuItem>
@@ -84,11 +114,7 @@ export function RevisionRowActions({ revision, siblings }: RevisionRowActionsPro
           onOpenChange={setRollbackOpen}
           current={active}
           target={revision}
-          onConfirm={() => {
-            toast.success(
-              `Rollback to revision ${formatRevisionNumber(revision.number)} started`,
-            )
-          }}
+          onConfirm={handleRollback}
         />
       ) : null}
 
@@ -100,6 +126,7 @@ export function RevisionRowActions({ revision, siblings }: RevisionRowActionsPro
         confirmLabel="Archive"
         onConfirm={() => {
           toast.success(`Revision ${formatRevisionNumber(revision.number)} archived`)
+          onRevisionUpdated?.()
         }}
       />
     </>

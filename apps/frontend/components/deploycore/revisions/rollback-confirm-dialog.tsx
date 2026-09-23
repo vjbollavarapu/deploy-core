@@ -12,7 +12,9 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { buildRollbackPrompt } from '@/lib/revisions'
+import { apiClient, ApiError } from '@/lib/api'
+import { toast } from 'sonner'
+import { buildRollbackPrompt, formatRevisionNumber } from '@/lib/revisions'
 import type { Revision } from '@/lib/types'
 
 interface RollbackConfirmDialogProps {
@@ -45,8 +47,25 @@ export function RollbackConfirmDialog({
   async function handleConfirm() {
     setPending(true)
     try {
-      await onConfirm?.()
+      if (onConfirm) {
+        await onConfirm()
+      } else {
+        await apiClient.post(`/applications/${target.applicationId}/rollback`, {
+          targetRevisionId: target.id,
+        })
+        toast.success(
+          `Rollback to revision ${formatRevisionNumber(target.number)} started`,
+        )
+      }
       setOpen(false)
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Rollback failed'
+      toast.error(msg)
     } finally {
       setPending(false)
     }

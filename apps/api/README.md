@@ -108,7 +108,7 @@ Implemented:
 - Worker-driven workflow (not long HTTP): validate server → effective config snapshot → revision candidate → source/build/image → container → health → activate → `RUNNING`
 - Resumable from current deployment status; each step uses the B11 state machine + events
 - Failures land on the exact stage (`*_FAILED` / `TIMEOUT`); previous `ACTIVE` revision and traffic are preserved
-- Agent commands issued when server is `ONLINE`; otherwise simulated (`ORCHESTRATOR_SIMULATE_AGENT`, default on outside production)
+- Agent commands issued when server is `ONLINE`; otherwise requires agent connectivity (`ORCHESTRATOR_SIMULATE_AGENT`, default **false**; set `true` only for local/dev simulation)
 
 ## Phase B14 revisions
 

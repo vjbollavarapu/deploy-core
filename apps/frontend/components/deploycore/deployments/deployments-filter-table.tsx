@@ -1,11 +1,11 @@
 'use client'
 
-import { Rocket, Search } from 'lucide-react'
+import { Rocket } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import { FilterBar } from '@/components/platform/filter-bar'
+import { DataTable } from '@/components/platform/data-table'
+import { DataTableToolbar } from '@/components/platform/data-table-toolbar'
+import { EmptyState } from '@/components/platform/empty-state'
 import { cn } from '@/lib/utils'
 import {
   DEPLOYMENT_FILTERS,
@@ -58,74 +58,70 @@ export function DeploymentsFilterTable({ deployments }: DeploymentsFilterTablePr
   )
 
   return (
-    <div className="flex flex-col gap-0">
-      <div className="flex flex-col gap-3 p-4">
-        <div className="flex flex-wrap gap-1.5">
-          {DEPLOYMENT_FILTERS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setFilter(item.id)}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
-                filter === item.id
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              {item.label}
-              <span className="tabular text-[10px] opacity-70">{filterCounts[item.id]}</span>
-            </button>
-          ))}
+    <DataTable
+      toolbar={
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter by deployment status">
+            {DEPLOYMENT_FILTERS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={filter === item.id}
+                onClick={() => setFilter(item.id)}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                  filter === item.id
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground',
+                )}
+              >
+                {item.label}
+                <span className="tabular text-[10px] opacity-70">{filterCounts[item.id]}</span>
+              </button>
+            ))}
+          </div>
+
+          <DataTableToolbar
+            searchPlaceholder="Search deployments..."
+            searchValue={query}
+            onSearchChange={setQuery}
+            filters={
+              <Select value={environment} onValueChange={(v) => setEnvironment(v ?? 'all')}>
+                <SelectTrigger className="w-40" aria-label="Filter by environment">
+                  <SelectValue placeholder="Environment" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All environments</SelectItem>
+                  {environments.map((env) => (
+                    <SelectItem key={env} value={env}>
+                      {env}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+            actions={
+              <span className="text-xs text-muted-foreground tabular">
+                {filtered.length} of {deployments.length} deployments
+              </span>
+            }
+          />
         </div>
-        <FilterBar
-          end={
-            <span className="text-xs text-muted-foreground">
-              {filtered.length} of {deployments.length} deployments
-            </span>
-          }
-        >
-          <InputGroup className="max-w-xs">
-            <InputGroupInput
-              placeholder="Search deployments..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              aria-label="Search deployments"
-            />
-            <InputGroupAddon>
-              <Search />
-            </InputGroupAddon>
-          </InputGroup>
-          <Select value={environment} onValueChange={(v) => setEnvironment(v ?? 'all')}>
-            <SelectTrigger className="w-40" aria-label="Filter by environment">
-              <SelectValue placeholder="Environment" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All environments</SelectItem>
-              {environments.map((env) => (
-                <SelectItem key={env} value={env}>
-                  {env}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FilterBar>
-      </div>
+      }
+    >
       {filtered.length === 0 ? (
-        <Empty className="border-t border-border py-12">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <Rocket />
-            </EmptyMedia>
-            <EmptyTitle>No deployments found</EmptyTitle>
-            <EmptyDescription>Try adjusting your search or filters.</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <div className="border-t border-border">
-          <DeploymentsTable deployments={filtered} />
+        <div className="p-4">
+          <EmptyState
+            icon={Rocket}
+            title="No deployments found"
+            description="Try adjusting your search or filters."
+            className="border-0"
+          />
         </div>
+      ) : (
+        <DeploymentsTable deployments={filtered} />
       )}
-    </div>
+    </DataTable>
   )
 }

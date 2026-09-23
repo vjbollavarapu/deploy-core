@@ -1,21 +1,8 @@
-import { Card, CardContent } from '@/components/ui/card'
-import { PageContainer } from '@/components/platform/page-container'
-import { PageHeader } from '@/components/platform/page-header'
-import { VolumesTable } from '@/components/deploycore/volumes/volumes-table'
+import { VolumesPageClient } from '@/components/deploycore/volumes/volumes-page-client'
 import { volumes } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
 
 export default function VolumesPage() {
-  return (
-    <PageContainer density="wide">
-      <PageHeader
-        title="Volumes"
-        description="Persistent storage volumes attached to applications and databases. Deletes require confirmation."
-      />
-      <Card>
-        <CardContent className="p-0">
-          <VolumesTable volumes={volumes} />
-        </CardContent>
-      </Card>
-    </PageContainer>
-  )
+  return <VolumesPageClient volumes={getDemoFixtures(volumes)} />
 }
+

@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { NewProjectButton } from './project-settings-panel'
 import type { Project } from '@/lib/types'
 
 function initials(name: string) {
@@ -31,9 +32,10 @@ function initials(name: string) {
 interface ProjectsTableProps {
   projects: Project[]
   actions?: ReactNode
+  onCreated?: () => void
 }
 
-export function ProjectsTable({ projects, actions }: ProjectsTableProps) {
+export function ProjectsTable({ projects, actions, onCreated }: ProjectsTableProps) {
   const [query, setQuery] = useState('')
 
   const filtered = useMemo(() => {
@@ -62,12 +64,13 @@ export function ProjectsTable({ projects, actions }: ProjectsTableProps) {
         <div className="p-4">
           <EmptyState
             icon={Boxes}
-            title="No projects found"
+            title={query ? 'No projects found' : 'No projects yet'}
             description={
               query
                 ? 'Try a different search term.'
-                : 'Create a project to group applications and environments.'
+                : 'Create a project to group applications, environments, and shared infrastructure.'
             }
+            action={!query ? <NewProjectButton onCreated={onCreated} /> : undefined}
             className="border-0"
           />
         </div>

@@ -1,8 +1,10 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { Search } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import {
   Select,
   SelectContent,
@@ -28,11 +30,23 @@ const CATEGORIES = [
 
 export function EventsFeed() {
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('all')
+  const [query, setQuery] = useState('')
   const events = useMemo(() => getPlatformEvents(), [])
-  const filtered = useMemo(
-    () => (category === 'all' ? events : events.filter((event) => event.category === category)),
-    [category, events],
-  )
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return events.filter((event) => {
+      if (category !== 'all' && event.category !== category) return false
+      if (!q) return true
+      return (
+        event.actor.toLowerCase().includes(q) ||
+        event.action.toLowerCase().includes(q) ||
+        event.target.toLowerCase().includes(q) ||
+        (event.project?.toLowerCase().includes(q) ?? false) ||
+        (event.environment?.toLowerCase().includes(q) ?? false)
+      )
+    })
+  }, [category, events, query])
 
   return (
     <div className="flex flex-col gap-4">
@@ -52,6 +66,18 @@ export function EventsFeed() {
             ))}
           </SelectContent>
         </Select>
+
+        <InputGroup className="max-w-xs">
+          <InputGroupInput
+            placeholder="Search events…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <InputGroupAddon>
+            <Search className="size-4 text-muted-foreground" />
+          </InputGroupAddon>
+        </InputGroup>
+
         <span className="text-xs text-muted-foreground">{filtered.length} events</span>
       </FilterBar>
 
@@ -63,7 +89,7 @@ export function EventsFeed() {
             ))}
             {filtered.length === 0 ? (
               <li className="p-6 text-center text-sm text-muted-foreground">
-                No events match this category.
+                No events match this filter.
               </li>
             ) : null}
           </ul>

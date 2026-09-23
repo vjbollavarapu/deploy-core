@@ -26,13 +26,13 @@ type ReplicaReconciler interface {
 
 // Loop runs one desired-state reconciliation sweep.
 type Loop struct {
-	pool      *pgxpool.Pool
-	agents    ServerExpirer
-	replicas  replicas.Repository
+	pool       *pgxpool.Pool
+	agents     ServerExpirer
+	replicas   replicas.Repository
 	reconciler ReplicaReconciler
-	log       *slog.Logger
-	cfg       Config
-	now       func() time.Time
+	log        *slog.Logger
+	cfg        Config
+	now        func() time.Time
 }
 
 func NewLoop(pool *pgxpool.Pool, agentSvc *agents.Service, replicaRepo replicas.Repository, replicaRec *replicas.Reconciler, log *slog.Logger, cfg Config) *Loop {

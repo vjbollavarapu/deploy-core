@@ -10,9 +10,14 @@ import { RevisionRowActions } from './revision-row-actions'
 interface RevisionsTableProps {
   revisions: Revision[]
   showApplication?: boolean
+  onRevisionUpdated?: () => void
 }
 
-export function RevisionsTable({ revisions, showApplication = true }: RevisionsTableProps) {
+export function RevisionsTable({
+  revisions,
+  showApplication = true,
+  onRevisionUpdated,
+}: RevisionsTableProps) {
   const byApp = (applicationId: string) =>
     revisions.filter((r) => r.applicationId === applicationId)
 
@@ -88,7 +93,11 @@ export function RevisionsTable({ revisions, showApplication = true }: RevisionsT
             <TableCell className="text-xs text-muted-foreground">{rev.createdAt}</TableCell>
             <TableCell className="text-xs text-muted-foreground">{rev.runtime}</TableCell>
             <TableCell className="text-right">
-              <RevisionRowActions revision={rev} siblings={byApp(rev.applicationId)} />
+              <RevisionRowActions
+                revision={rev}
+                siblings={byApp(rev.applicationId)}
+                onRevisionUpdated={onRevisionUpdated}
+              />
             </TableCell>
           </TableRow>
         ))}

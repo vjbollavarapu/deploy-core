@@ -1,14 +1,16 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import {
+  Braces,
+  ClipboardPaste,
   FileUp,
+  Layers,
   MoreHorizontal,
   Pencil,
   Plus,
   Search,
   Trash2,
-  ClipboardPaste,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -37,20 +39,26 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { FilterBar } from '@/components/platform/filter-bar'
 import { DestructiveConfirmDialog } from '@/components/platform/destructive-confirm-dialog'
+import { EmptyState } from '@/components/platform/empty-state'
 import { MaskedSecretInput, SecretField } from '@/components/platform/secret-field'
 import { cn } from '@/lib/utils'
 import {
   ENV_SCOPES,
   ENV_VAR_KIND_LABELS,
+  detectOverrides,
   filterEnvVars,
   getEnvVarKind,
   parseEnvText,
   type EnvVarKind,
 } from '@/lib/variables'
+import { addVariableSchema } from '@/lib/validations/variable'
 import type { EnvVarEntry } from '@/lib/types'
 
 interface EnvironmentVariablesEditorProps {
   initialVariables: EnvVarEntry[]
+  title?: string
+  description?: string
+  hideHierarchyBanner?: boolean
 }
 
 type Draft = {
@@ -69,21 +77,36 @@ const EMPTY_DRAFT: Draft = {
   secret: false,
 }
 
-export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVariablesEditorProps) {
-  const [variables, setVariables] = useState(initialVariables)
+export function EnvironmentVariablesEditor({
+  initialVariables,
+  hideHierarchyBanner = false,
+}: EnvironmentVariablesEditorProps) {
+  const [variables, setVariables] = useState<EnvVarEntry[]>(() =>
+    detectOverrides(initialVariables),
+  )
   const [query, setQuery] = useState('')
   const [scope, setScope] = useState('all')
   const [kind, setKind] = useState<EnvVarKind | 'all'>('all')
+
   const [editorOpen, setEditorOpen] = useState(false)
   const [editing, setEditing] = useState<EnvVarEntry | null>(null)
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [errors, setErrors] = useState<{ key?: string; value?: string; source?: string }>({})
+
   const [bulkOpen, setBulkOpen] = useState(false)
   const [bulkText, setBulkText] = useState('')
+
   const [importOpen, setImportOpen] = useState(false)
   const [importText, setImportText] = useState('')
+
   const [removeTarget, setRemoveTarget] = useState<EnvVarEntry | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  const keyInputId = useId()
+  const scopeSelectId = useId()
+  const sourceInputId = useId()
+  const secretSwitchId = useId()
+  const valueInputId = useId()
 
   const filtered = useMemo(
     () => filterEnvVars(variables, { query, scope, kind }),
@@ -101,7 +124,7 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
   function openCreate() {
     setEditing(null)
     setDraft(EMPTY_DRAFT)
-    setFormError(null)
+    setErrors({})
     setEditorOpen(true)
   }
 
@@ -109,67 +132,69 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
     setEditing(entry)
     setDraft({
       key: entry.key,
-      // Secrets are never repopulated from the server — leave blank for re-entry.
+      // Secrets are write-only — never repopulated from the server.
       value: entry.secret ? '' : entry.value,
       scope: entry.scope,
       source: entry.source,
       secret: entry.secret,
     })
-    setFormError(null)
+    setErrors({})
     setEditorOpen(true)
   }
 
   function saveVariable() {
-    const key = draft.key.trim()
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      setFormError('Use a valid KEY_NAME')
-      return
-    }
-    if (!draft.secret && draft.value.trim() === '') {
-      setFormError('Value is required')
-      return
-    }
-    if (draft.secret && !editing && draft.value.trim() === '') {
-      setFormError('Secret value is required')
-      return
-    }
-    if (draft.secret && editing && draft.value.trim() === '') {
-      setFormError('Enter a new secret value — existing values are never shown or reused')
+    const result = addVariableSchema.safeParse(draft)
+    if (!result.success) {
+      const fieldErrors: { key?: string; value?: string; source?: string } = {}
+      for (const issue of result.error.issues) {
+        const path = issue.path[0] as 'key' | 'value' | 'source'
+        if (path && !fieldErrors[path]) {
+          fieldErrors[path] = issue.message
+        }
+      }
+      setErrors(fieldErrors)
       return
     }
 
-    if (editing) {
-      setVariables((prev) =>
-        prev.map((entry) =>
+    if (draft.secret && editing && draft.value.trim() === '') {
+      setErrors({ value: 'Enter a new secret value (existing values are never shown or reused)' })
+      return
+    }
+
+    const key = draft.key.trim()
+    const value = draft.secret ? '••••••••••••' : draft.value
+
+    setVariables((prev) => {
+      let updated: EnvVarEntry[]
+      if (editing) {
+        updated = prev.map((entry) =>
           entry.id === editing.id
             ? {
                 ...entry,
                 key,
-                value: draft.secret ? '••••••••••••' : draft.value,
+                value: draft.secret && draft.value.trim() === '' ? entry.value : value,
                 scope: draft.scope,
                 source: draft.source,
                 secret: draft.secret,
-                overridden: draft.scope !== 'Organization' && key === 'LOG_LEVEL',
               }
             : entry,
-        ),
-      )
-      toast.success(`Updated ${key}`)
-    } else {
-      setVariables((prev) => [
-        {
+        )
+      } else {
+        const newItem: EnvVarEntry = {
           id: `ev-${Date.now()}`,
           key,
-          value: draft.secret ? '••••••••••••' : draft.value,
+          value,
           secret: draft.secret,
           scope: draft.scope,
           source: draft.source,
           overridden: false,
-        },
-        ...prev,
-      ])
-      toast.success(`Added ${key}`)
-    }
+        }
+        updated = [newItem, ...prev]
+      }
+      return detectOverrides(updated)
+    })
+
+    toast.success(editing ? `Updated ${key}` : `Added ${key}`)
     setEditorOpen(false)
   }
 
@@ -193,17 +218,39 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
           source: 'daya-api',
           overridden: false,
         }
-        if (existing >= 0) next[existing] = item
-        else next.unshift(item)
+        if (existing >= 0) {
+          next[existing] = item
+        } else {
+          next.unshift(item)
+        }
       }
-      return next
+      return detectOverrides(next)
     })
-    toast.success(`${label}: ${rows.length} variable${rows.length === 1 ? '' : 's'}`)
+    toast.success(`${label}: ${rows.length} variable${rows.length === 1 ? '' : 's'} imported`)
   }
 
   return (
-    <div className="flex flex-col gap-0">
-      <div className="flex flex-col gap-3 p-4">
+    <div className="flex flex-col gap-4">
+      {!hideHierarchyBanner ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <Layers className="size-4 shrink-0 text-primary" />
+            <span className="text-xs font-medium text-foreground">Hierarchy Resolution</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+            <Badge variant="outline" className="text-[10px]">1. Organization</Badge>
+            <span>→</span>
+            <Badge variant="outline" className="text-[10px]">2. Project</Badge>
+            <span>→</span>
+            <Badge variant="outline" className="text-[10px]">3. Environment</Badge>
+            <span>→</span>
+            <Badge variant="secondary" className="text-[10px]">4. Application</Badge>
+            <span className="ml-1 text-[11px] opacity-75">(lower scopes override parent scopes)</span>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="flex flex-col gap-3">
         <div className="flex flex-wrap gap-1.5">
           {(
             [
@@ -252,7 +299,7 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
         >
           <InputGroup className="max-w-xs">
             <InputGroupInput
-              placeholder="Search keys…"
+              placeholder="Search keys, sources, values…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -261,7 +308,7 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
             </InputGroupAddon>
           </InputGroup>
           <Select value={scope} onValueChange={(v) => setScope(v ?? 'all')}>
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-44">
               <SelectValue placeholder="Scope" />
             </SelectTrigger>
             <SelectContent>
@@ -276,127 +323,165 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
         </FilterBar>
       </div>
 
-      <div className="border-t border-border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Key</TableHead>
-              <TableHead>Kind</TableHead>
-              <TableHead>Scope</TableHead>
-              <TableHead>Source</TableHead>
-              <TableHead>Value</TableHead>
-              <TableHead className="w-10 text-right">
-                <span className="sr-only">Actions</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((entry) => {
-              const entryKind = getEnvVarKind(entry)
-              return (
-                <TableRow key={entry.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-xs font-medium">{entry.key}</span>
-                      {entry.secret ? (
-                        <Badge variant="outline" className="text-[10px]">
-                          Secret
-                        </Badge>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={entryKind === 'overridden' ? 'secondary' : 'outline'}
-                      className="text-[10px]"
-                    >
-                      {ENV_VAR_KIND_LABELS[entryKind]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="secondary" className="text-[10px]">
-                      {entry.scope}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{entry.source}</TableCell>
-                  <TableCell>
-                    {entry.secret ? (
-                      <SecretField value={entry.value} neverReveal className="w-48" />
-                    ) : (
-                      <span className="font-mono text-xs text-muted-foreground">{entry.value}</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Actions for ${entry.key}`}
-                          />
-                        }
+      <div className="rounded-lg border border-border overflow-hidden">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Key</TableHead>
+                <TableHead>Kind</TableHead>
+                <TableHead>Scope</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Value</TableHead>
+                <TableHead className="w-10 text-right">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((entry) => {
+                const entryKind = getEnvVarKind(entry)
+                return (
+                  <TableRow key={entry.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-xs font-semibold">{entry.key}</span>
+                        {entry.secret ? (
+                          <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400 border-amber-500/30">
+                            Secret
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={entryKind === 'overridden' ? 'secondary' : entryKind === 'inherited' ? 'outline' : 'default'}
+                        className="text-[10px]"
                       >
-                        <MoreHorizontal />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => openEdit(entry)}>
-                          <Pencil />
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onClick={() => setRemoveTarget(entry)}
+                        {ENV_VAR_KIND_LABELS[entryKind]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="text-[10px]">
+                        {entry.scope}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{entry.source}</TableCell>
+                    <TableCell>
+                      {entry.secret ? (
+                        <SecretField value={entry.value} neverReveal className="w-44" />
+                      ) : (
+                        <span className="font-mono text-xs text-muted-foreground break-all">{entry.value}</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Actions for ${entry.key}`}
+                            />
+                          }
                         >
-                          <Trash2 />
-                          Remove
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                          <MoreHorizontal />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => openEdit(entry)}>
+                            <Pencil />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onClick={() => setRemoveTarget(entry)}
+                          >
+                            <Trash2 />
+                            Remove
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+              {filtered.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-12">
+                    <EmptyState
+                      icon={Braces}
+                      title="No variables found"
+                      description={
+                        query || scope !== 'all' || kind !== 'all'
+                          ? 'No environment variables match your filter criteria.'
+                          : 'No environment variables configured yet.'
+                      }
+                      action={
+                        query || scope !== 'all' || kind !== 'all' ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setQuery('')
+                              setScope('all')
+                              setKind('all')
+                            }}
+                          >
+                            Reset filters
+                          </Button>
+                        ) : (
+                          <Button size="sm" onClick={openCreate}>
+                            <Plus data-icon="inline-start" />
+                            Add variable
+                          </Button>
+                        )
+                      }
+                      className="border-0"
+                    />
                   </TableCell>
                 </TableRow>
-              )
-            })}
-            {filtered.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
-                  No variables match your filters.
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
+              ) : null}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
       <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{editing ? 'Edit variable' : 'Add variable'}</DialogTitle>
+            <DialogTitle>{editing ? `Edit variable ${editing.key}` : 'Add variable'}</DialogTitle>
             <DialogDescription>
-              Hierarchy: Organization → Project → Environment → Application. Secret values are
-              never loaded from the server when editing.
+              Scope hierarchy: Organization → Project → Environment → Application. Secret values
+              are write-only and never revealed.
             </DialogDescription>
           </DialogHeader>
           <FieldGroup>
-            <Field data-invalid={Boolean(formError)}>
-              <FieldLabel htmlFor="ev-key">Key</FieldLabel>
+            <Field data-invalid={Boolean(errors.key)}>
+              <FieldLabel htmlFor={keyInputId}>Key</FieldLabel>
               <Input
-                id="ev-key"
+                id={keyInputId}
                 className="font-mono"
                 value={draft.key}
-                onChange={(e) => setDraft((d) => ({ ...d, key: e.target.value }))}
+                aria-invalid={Boolean(errors.key)}
+                onChange={(e) => {
+                  setDraft((d) => ({ ...d, key: e.target.value }))
+                  if (errors.key) setErrors((prev) => ({ ...prev, key: undefined }))
+                }}
+                placeholder="DATABASE_URL"
               />
+              {errors.key ? <FieldError>{errors.key}</FieldError> : null}
             </Field>
+
             <Field>
-              <FieldLabel htmlFor="ev-scope">Scope</FieldLabel>
+              <FieldLabel htmlFor={scopeSelectId}>Scope</FieldLabel>
               <Select
                 value={draft.scope}
                 onValueChange={(v) =>
                   setDraft((d) => ({ ...d, scope: (v as EnvVarEntry['scope']) ?? 'Application' }))
                 }
               >
-                <SelectTrigger id="ev-scope" className="w-full">
+                <SelectTrigger id={scopeSelectId} className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -408,45 +493,64 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
                 </SelectContent>
               </Select>
             </Field>
-            <Field>
-              <FieldLabel htmlFor="ev-source">Source</FieldLabel>
+
+            <Field data-invalid={Boolean(errors.source)}>
+              <FieldLabel htmlFor={sourceInputId}>Source</FieldLabel>
               <Input
-                id="ev-source"
+                id={sourceInputId}
                 value={draft.source}
-                onChange={(e) => setDraft((d) => ({ ...d, source: e.target.value }))}
+                aria-invalid={Boolean(errors.source)}
+                onChange={(e) => {
+                  setDraft((d) => ({ ...d, source: e.target.value }))
+                  if (errors.source) setErrors((prev) => ({ ...prev, source: undefined }))
+                }}
+                placeholder="daya-api or Production"
               />
+              <FieldDescription>Application, environment, or project name declaring this variable.</FieldDescription>
+              {errors.source ? <FieldError>{errors.source}</FieldError> : null}
             </Field>
-            <Field className="flex flex-row items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
-              <div>
-                <FieldLabel htmlFor="ev-secret">Secret</FieldLabel>
-                <FieldDescription>Mask value and never echo from server on edit.</FieldDescription>
+
+            <Field className="flex flex-row items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+              <div className="flex flex-col gap-0.5">
+                <FieldLabel htmlFor={secretSwitchId} className="cursor-pointer">Secret variable</FieldLabel>
+                <FieldDescription>Mask value. DeployCore never sends existing plaintext to UI.</FieldDescription>
               </div>
               <Switch
-                id="ev-secret"
+                id={secretSwitchId}
                 checked={draft.secret}
                 onCheckedChange={(checked) =>
                   setDraft((d) => ({ ...d, secret: checked, value: checked ? '' : d.value }))
                 }
               />
             </Field>
-            <Field data-invalid={Boolean(formError)}>
-              <FieldLabel htmlFor="ev-value">Value</FieldLabel>
+
+            <Field data-invalid={Boolean(errors.value)}>
+              <FieldLabel htmlFor={valueInputId}>Value</FieldLabel>
               {draft.secret ? (
                 <MaskedSecretInput
-                  id="ev-value"
+                  id={valueInputId}
                   value={draft.value}
-                  onChange={(value) => setDraft((d) => ({ ...d, value }))}
-                  placeholder={editing ? 'Enter new value (existing never shown)' : 'Enter secret value'}
+                  onChange={(value) => {
+                    setDraft((d) => ({ ...d, value }))
+                    if (errors.value) setErrors((prev) => ({ ...prev, value: undefined }))
+                  }}
+                  aria-invalid={Boolean(errors.value)}
+                  placeholder={editing ? 'Enter new secret value (existing never shown)' : 'Enter secret value'}
                 />
               ) : (
                 <Input
-                  id="ev-value"
+                  id={valueInputId}
                   className="font-mono"
                   value={draft.value}
-                  onChange={(e) => setDraft((d) => ({ ...d, value: e.target.value }))}
+                  aria-invalid={Boolean(errors.value)}
+                  onChange={(e) => {
+                    setDraft((d) => ({ ...d, value: e.target.value }))
+                    if (errors.value) setErrors((prev) => ({ ...prev, value: undefined }))
+                  }}
+                  placeholder="value"
                 />
               )}
-              {formError ? <FieldError>{formError}</FieldError> : null}
+              {errors.value ? <FieldError>{errors.value}</FieldError> : null}
             </Field>
           </FieldGroup>
           <DialogFooter>
@@ -454,7 +558,7 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
               Cancel
             </Button>
             <Button type="button" onClick={saveVariable}>
-              Save
+              Save variable
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -463,17 +567,16 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
       <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Bulk paste</DialogTitle>
+            <DialogTitle>Bulk paste variables</DialogTitle>
             <DialogDescription>
-              Paste KEY=value lines. Applied at Application scope. Lines with SECRET/PASSWORD/TOKEN
-              keys are treated as secrets.
+              Paste KEY=value pairs. Applied at Application scope. Keys matching SECRET, TOKEN, PASSWORD, or KEY are automatically marked as secrets.
             </DialogDescription>
           </DialogHeader>
           <Textarea
             value={bulkText}
             onChange={(e) => setBulkText(e.target.value)}
             className="min-h-40 font-mono text-xs"
-            placeholder={'API_BASE_URL=https://api.example.com\nFEATURE_FLAG=true'}
+            placeholder={'API_BASE_URL=https://api.example.com\nDATABASE_PORT=5432\nSTRIPE_API_KEY=sk_live_...'}
           />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setBulkOpen(false)}>
@@ -487,7 +590,7 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
                 setBulkText('')
               }}
             >
-              Import lines
+              Import variables
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -496,9 +599,9 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>.env import</DialogTitle>
+            <DialogTitle>.env file import</DialogTitle>
             <DialogDescription>
-              Upload a .env file or paste its contents. Comments and blank lines are ignored.
+              Upload a .env file or paste its content. Comments (#) and empty lines are skipped.
             </DialogDescription>
           </DialogHeader>
           <input
@@ -522,13 +625,13 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
             onClick={() => fileRef.current?.click()}
           >
             <FileUp data-icon="inline-start" />
-            Choose .env file
+            Select .env file
           </Button>
           <Textarea
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
             className="min-h-40 font-mono text-xs"
-            placeholder="# pasted .env contents"
+            placeholder="# Paste .env file contents here..."
           />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setImportOpen(false)}>
@@ -542,7 +645,7 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
                 setImportText('')
               }}
             >
-              Import
+              Import variables
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -555,11 +658,11 @@ export function EnvironmentVariablesEditor({ initialVariables }: EnvironmentVari
             if (!open) setRemoveTarget(null)
           }}
           title={`Remove ${removeTarget.key}?`}
-          description="This removes the variable from the selected scope. Inherited values from parent scopes remain."
-          confirmLabel="Remove"
+          description={`This removes ${removeTarget.key} from the ${removeTarget.scope} scope. Inherited values from higher scopes (if any) will reactivate.`}
+          confirmLabel="Remove variable"
           confirmationPhrase={removeTarget.key}
           onConfirm={() => {
-            setVariables((prev) => prev.filter((entry) => entry.id !== removeTarget.id))
+            setVariables((prev) => detectOverrides(prev.filter((entry) => entry.id !== removeTarget.id)))
             toast.success(`${removeTarget.key} removed`)
             setRemoveTarget(null)
           }}

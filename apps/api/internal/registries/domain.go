@@ -56,13 +56,13 @@ type CreateInput struct {
 }
 
 type UpdateInput struct {
-	Name           *string
-	RegistryURL    *string
-	Username       *string
-	Status         *string
-	Credentials    *Credentials
+	Name             *string
+	RegistryURL      *string
+	Username         *string
+	Status           *string
+	Credentials      *Credentials
 	ClearCredentials bool
-	Metadata       map[string]any
+	Metadata         map[string]any
 }
 
 type AuditMeta struct {

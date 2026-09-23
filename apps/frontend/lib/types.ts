@@ -18,6 +18,7 @@ export interface Project {
   id: string
   name: string
   slug: string
+  description?: string
   environments: string[]
   applicationCount: number
   health: Status
@@ -449,7 +450,7 @@ export interface BackupRun {
   backupJobId: string
   database: string
   databaseId: string
-  status: 'success' | 'failed' | 'running'
+  status: 'success' | 'failed' | 'running' | 'queued'
   startedAt: string
   completedAt: string
   duration: string

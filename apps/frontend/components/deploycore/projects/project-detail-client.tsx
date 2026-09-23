@@ -1,15 +1,17 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { History, Plus, Rocket } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent } from '@/components/ui/card'
 import { PageContainer } from '@/components/platform/page-container'
 import { PageHeader } from '@/components/platform/page-header'
 import { Breadcrumbs } from '@/components/platform/breadcrumbs'
+import { EmptyState } from '@/components/platform/empty-state'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { ApplicationsTable } from '@/components/deploycore/applications/applications-table'
+import { CreateApplicationWizard } from '@/components/deploycore/applications/create-application-wizard'
 import { DeploymentsTable } from '@/components/deploycore/deployments/deployments-table'
 import { ProjectOverview } from '@/components/deploycore/projects/project-overview'
 import { ProjectEnvironmentsPanel } from '@/components/deploycore/projects/project-environments-panel'
@@ -71,10 +73,15 @@ export function ProjectDetailClient({
               <Plus data-icon="inline-start" />
               Environment
             </Button>
-            <Button size="sm">
-              <Plus data-icon="inline-start" />
-              Application
-            </Button>
+            <CreateApplicationWizard
+              defaultProjectId={project.id}
+              trigger={
+                <Button size="sm">
+                  <Plus data-icon="inline-start" />
+                  Application
+                </Button>
+              }
+            />
           </div>
         }
       />
@@ -112,7 +119,27 @@ export function ProjectDetailClient({
         <TabsContent value="applications" className="mt-4">
           <Card size="sm">
             <CardContent className="p-0">
-              <ApplicationsTable applications={applications} showProject={false} />
+              {applications.length === 0 ? (
+                <EmptyState
+                  icon={Rocket}
+                  title="No applications"
+                  description="This project doesn't have any applications yet."
+                  action={
+                    <CreateApplicationWizard
+                      defaultProjectId={project.id}
+                      trigger={
+                        <Button size="sm">
+                          <Plus data-icon="inline-start" />
+                          Application
+                        </Button>
+                      }
+                    />
+                  }
+                  className="border-0 p-8"
+                />
+              ) : (
+                <ApplicationsTable applications={applications} showProject={false} />
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -124,13 +151,27 @@ export function ProjectDetailClient({
         <TabsContent value="activity" className="mt-4">
           <Card size="sm">
             <CardContent className="p-0">
-              <DeploymentsTable deployments={deployments} />
+              {deployments.length === 0 ? (
+                <EmptyState
+                  icon={History}
+                  title="No deployment activity"
+                  description="Deployments created in this project will appear here."
+                  className="border-0 p-8"
+                />
+              ) : (
+                <DeploymentsTable deployments={deployments} />
+              )}
             </CardContent>
           </Card>
         </TabsContent>
 
         <TabsContent value="settings" className="mt-4">
-          <ProjectSettingsPanel name={project.name} slug={project.slug} />
+          <ProjectSettingsPanel
+            id={project.id}
+            name={project.name}
+            slug={project.slug}
+            description={project.description}
+          />
         </TabsContent>
       </Tabs>
 
@@ -138,6 +179,7 @@ export function ProjectDetailClient({
         open={envDialogOpen}
         onOpenChange={setEnvDialogOpen}
         projectName={project.name}
+        projectId={project.id}
         existingNames={project.environments}
       />
     </PageContainer>

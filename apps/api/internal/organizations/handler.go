@@ -33,7 +33,9 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.Handle("PATCH /organizations/{orgId}/members/{memberId}", h.auth.RequireAuth(http.HandlerFunc(h.UpdateMemberRoles)))
 	mux.Handle("DELETE /organizations/{orgId}/members/{memberId}", h.auth.RequireAuth(http.HandlerFunc(h.RemoveMember)))
 
+	mux.Handle("GET /organizations/{orgId}/invitations", h.auth.RequireAuth(http.HandlerFunc(h.ListInvitations)))
 	mux.Handle("POST /organizations/{orgId}/invitations", h.auth.RequireAuth(http.HandlerFunc(h.Invite)))
+	mux.Handle("DELETE /organizations/{orgId}/invitations/{invitationId}", h.auth.RequireAuth(http.HandlerFunc(h.RevokeInvitation)))
 	mux.Handle("POST /invitations/accept", h.auth.RequireAuth(http.HandlerFunc(h.AcceptInvitation)))
 }
 
@@ -88,12 +90,16 @@ type memberResponse struct {
 }
 
 type invitationResponse struct {
-	ID        string         `json:"id"`
-	Email     string         `json:"email"`
-	Roles     []roleResponse `json:"roles"`
-	ExpiresAt string         `json:"expiresAt"`
-	CreatedAt string         `json:"createdAt"`
-	Token     string         `json:"token,omitempty"`
+	ID         string         `json:"id"`
+	Email      string         `json:"email"`
+	Roles      []roleResponse `json:"roles"`
+	ExpiresAt  string         `json:"expiresAt"`
+	CreatedAt  string         `json:"createdAt"`
+	Token      string         `json:"token,omitempty"`
+	Status     string         `json:"status"`
+	InvitedBy  *string        `json:"invitedBy,omitempty"`
+	AcceptedAt *string        `json:"acceptedAt,omitempty"`
+	RevokedAt  *string        `json:"revokedAt,omitempty"`
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +218,45 @@ func (h *Handler) Invite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"invitation": resp})
 }
 
+func (h *Handler) ListInvitations(w http.ResponseWriter, r *http.Request) {
+	user, orgID, err := actorAndOrg(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	page := pagination.FromRequest(r)
+	items, total, err := h.svc.ListInvitations(r.Context(), user.ID, orgID, page.Limit, page.Offset)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	out := make([]invitationResponse, 0, len(items))
+	for _, inv := range items {
+		out = append(out, toInvitationResponse(inv))
+	}
+	writeJSON(w, http.StatusOK, pagination.Page[invitationResponse]{
+		Items: out, TotalCount: &total, Limit: page.Limit, Offset: page.Offset,
+	})
+}
+
+func (h *Handler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
+	user, orgID, err := actorAndOrg(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	invitationID, err := uuid.Parse(r.PathValue("invitationId"))
+	if err != nil {
+		writeErr(w, r, apierror.Validation("invalid invitation id", nil))
+		return
+	}
+	if err := h.svc.RevokeInvitation(r.Context(), user.ID, orgID, invitationID, auditMeta(r)); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	user, ok := auth.UserFromContext(r.Context())
 	if !ok {
@@ -319,13 +364,36 @@ func toMemberResponse(m Member) memberResponse {
 }
 
 func toInvitationResponse(inv Invitation) invitationResponse {
-	return invitationResponse{
+	status := "pending"
+	now := time.Now().UTC()
+	if inv.RevokedAt != nil {
+		status = "revoked"
+	} else if inv.AcceptedAt != nil {
+		status = "accepted"
+	} else if inv.ExpiresAt.Before(now) {
+		status = "expired"
+	}
+	out := invitationResponse{
 		ID:        inv.ID.String(),
 		Email:     inv.Email,
 		Roles:     toRoleResponses(inv.Roles),
 		ExpiresAt: inv.ExpiresAt.UTC().Format(time.RFC3339Nano),
 		CreatedAt: inv.CreatedAt.UTC().Format(time.RFC3339Nano),
+		Status:    status,
 	}
+	if inv.InvitedBy != nil {
+		s := inv.InvitedBy.String()
+		out.InvitedBy = &s
+	}
+	if inv.AcceptedAt != nil {
+		s := inv.AcceptedAt.UTC().Format(time.RFC3339Nano)
+		out.AcceptedAt = &s
+	}
+	if inv.RevokedAt != nil {
+		s := inv.RevokedAt.UTC().Format(time.RFC3339Nano)
+		out.RevokedAt = &s
+	}
+	return out
 }
 
 func toRoleResponses(roles []Role) []roleResponse {

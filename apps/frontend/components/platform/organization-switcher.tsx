@@ -1,7 +1,6 @@
 'use client'
 
 import { Check, ChevronsUpDown } from 'lucide-react'
-import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -11,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { organizations } from '@/lib/mock-data'
+import { useOrganization } from '@/lib/auth-context'
 import { cn } from '@/lib/utils'
 
 interface OrganizationSwitcherProps {
@@ -20,10 +19,9 @@ interface OrganizationSwitcherProps {
 }
 
 export function OrganizationSwitcher({ className, collapsed = false }: OrganizationSwitcherProps) {
-  const [activeId, setActiveId] = useState(organizations[0]?.id ?? '')
-  const active = organizations.find((org) => org.id === activeId) ?? organizations[0]
+  const { organizations, activeOrg, setActiveOrg } = useOrganization()
 
-  if (!active) return null
+  if (!activeOrg) return null
 
   return (
     <DropdownMenu>
@@ -36,7 +34,7 @@ export function OrganizationSwitcher({ className, collapsed = false }: Organizat
               collapsed ? 'size-8' : 'h-8 w-full justify-between gap-2 px-2 font-normal',
               className,
             )}
-            aria-label={`Organization: ${active.name}`}
+            aria-label={`Organization: ${activeOrg.name}`}
           />
         }
       >
@@ -46,11 +44,11 @@ export function OrganizationSwitcher({ className, collapsed = false }: Organizat
             collapsed && 'size-4 text-[9px]',
           )}
         >
-          {active.name.slice(0, 2).toUpperCase()}
+          {(activeOrg.name ?? 'O').slice(0, 2).toUpperCase()}
         </span>
         {!collapsed && (
           <>
-            <span className="truncate text-left text-xs">{active.name}</span>
+            <span className="truncate text-left text-xs">{activeOrg.name}</span>
             <ChevronsUpDown className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
           </>
         )}
@@ -59,12 +57,12 @@ export function OrganizationSwitcher({ className, collapsed = false }: Organizat
         <DropdownMenuLabel>Organizations</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {organizations.map((org) => (
-          <DropdownMenuItem key={org.id} onClick={() => setActiveId(org.id)}>
+          <DropdownMenuItem key={org.id} onClick={() => setActiveOrg(org)}>
             <span className="flex size-5 items-center justify-center rounded bg-muted text-[10px] font-semibold">
-              {org.name.slice(0, 2).toUpperCase()}
+              {(org.name ?? 'O').slice(0, 2).toUpperCase()}
             </span>
             <span className="flex-1 truncate">{org.name}</span>
-            {org.id === active.id && <Check className="size-3.5 text-primary" />}
+            {org.id === activeOrg.id && <Check className="size-3.5 text-primary" />}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

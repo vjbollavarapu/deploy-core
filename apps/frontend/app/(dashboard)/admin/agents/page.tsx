@@ -1,7 +1,10 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { StatusBadge } from '@/components/platform/status-badge'
-import { servers } from '@/lib/mock-data'
+import { servers as rawServers } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const servers = getDemoFixtures(rawServers)
 
 export default function AdminAgentsPage() {
   return (

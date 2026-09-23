@@ -32,8 +32,8 @@ func BuildRoutingConfig(appSlug string, d Domain) RoutingConfig {
 
 	labels := map[string]string{
 		"traefik.enable": "true",
-		fmt.Sprintf("traefik.http.routers.%s.rule", router):                      fmt.Sprintf("Host(`%s`)", d.Hostname),
-		fmt.Sprintf("traefik.http.routers.%s.service", router):                   service,
+		fmt.Sprintf("traefik.http.routers.%s.rule", router):                       fmt.Sprintf("Host(`%s`)", d.Hostname),
+		fmt.Sprintf("traefik.http.routers.%s.service", router):                    service,
 		fmt.Sprintf("traefik.http.services.%s.loadbalancer.server.port", service): fmt.Sprintf("%d", d.InternalPort),
 	}
 
@@ -94,4 +94,44 @@ func sanitizeLabel(s string) string {
 		out = out[:48]
 	}
 	return out
+}
+
+// BuildAgentTraefikConfig builds the Agent OpDeployRevision `traefik` payload
+// from control-plane domain rows. Shape matches apps/agent docker.TraefikConfig.
+// Returns nil when there are no domains (no synthetic routing).
+func BuildAgentTraefikConfig(appSlug string, list []Domain) map[string]any {
+	if len(list) == 0 {
+		return nil
+	}
+	port := list[0].InternalPort
+	domainsOut := make([]map[string]any, 0, len(list))
+	for _, d := range list {
+		if d.IsPrimary && d.InternalPort > 0 {
+			port = d.InternalPort
+		}
+		entry := map[string]any{
+			"hostname":   d.Hostname,
+			"isPrimary":  d.IsPrimary,
+			"forceHTTPS": d.ForceHTTPS,
+		}
+		if d.ForceHTTPS {
+			entry["certResolver"] = "letsencrypt"
+		}
+		// Secondary domains redirect to the primary when multi-domain is configured.
+		if !d.IsPrimary {
+			entry["redirectToPrimary"] = true
+		}
+		domainsOut = append(domainsOut, entry)
+	}
+	if port <= 0 {
+		port = 80
+	}
+	return map[string]any{
+		"enabled":         true,
+		"serviceName":     sanitizeLabel(appSlug),
+		"port":            port,
+		"domains":         domainsOut,
+		"enableWebSocket": true,
+		"traefikNetwork":  "deploycore-proxy",
+	}
 }

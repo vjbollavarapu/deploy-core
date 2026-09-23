@@ -8,7 +8,10 @@ import { PageContainer } from '@/components/platform/page-container'
 import { ResourceHeader } from '@/components/platform/resource-header'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { findDatabase } from '@/lib/databases'
-import { databases } from '@/lib/mock-data'
+import { databases as rawDatabases } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const databases = getDemoFixtures(rawDatabases)
 
 export default async function DatabaseLayout({
   children,

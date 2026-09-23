@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/deploycore/deploy-core/apps/api/internal/agentcmd"
 	"github.com/deploycore/deploy-core/apps/api/internal/auth"
 	"github.com/deploycore/deploy-core/apps/api/internal/config"
 	"github.com/deploycore/deploy-core/apps/api/internal/databases"
@@ -20,6 +19,7 @@ import (
 	"github.com/deploycore/deploy-core/apps/api/internal/rbac"
 	"github.com/deploycore/deploy-core/apps/api/internal/server"
 	"github.com/deploycore/deploy-core/apps/api/pkg/crypto"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -110,11 +110,11 @@ func TestManagedDatabaseProvisionFlow(t *testing.T) {
 	}
 	var created struct {
 		Database struct {
-			ID                string `json:"id"`
-			Status            string `json:"status"`
-			StorageVolumeName string `json:"storageVolumeName"`
-			VolumeProtected   bool   `json:"volumeProtected"`
-			HasCredential     bool   `json:"hasCredential"`
+			ID                 string  `json:"id"`
+			Status             string  `json:"status"`
+			StorageVolumeName  string  `json:"storageVolumeName"`
+			VolumeProtected    bool    `json:"volumeProtected"`
+			HasCredential      bool    `json:"hasCredential"`
 			ProvisionCommandID *string `json:"provisionCommandId"`
 		} `json:"database"`
 	}
@@ -186,8 +186,17 @@ func TestManagedDatabaseProvisionFlow(t *testing.T) {
 	}
 
 	del := doJSON(t, srv, http.MethodDelete, "/api/v1/databases/"+created.Database.ID, nil, ownerTok)
-	if del.Code != http.StatusNoContent {
+	if del.Code != http.StatusOK {
 		t.Fatalf("delete status=%d body=%s", del.Code, del.Body.String())
+	}
+	var delBody struct {
+		RuntimeStopped bool   `json:"runtimeStopped"`
+		VolumeDeleted  bool   `json:"volumeDeleted"`
+		Message        string `json:"message"`
+	}
+	decode(t, del, &delBody)
+	if delBody.RuntimeStopped || delBody.VolumeDeleted {
+		t.Fatalf("delete must not claim runtime/volume destruction: %+v", delBody)
 	}
 	// Volume name row soft-deleted; protected volume must not be auto-removed (no volume table yet).
 	var vol string
@@ -202,7 +211,7 @@ func TestManagedDatabaseProvisionFlow(t *testing.T) {
 		t.Fatalf("after delete status=%s vol=%s", status, vol)
 	}
 
-	_ = agentcmd.OpProvisionDatabase
+	_ = protocol.OpProvisionDatabase
 }
 
 func createServer(t *testing.T, srv *server.Server, token, orgID string) string {

@@ -48,7 +48,7 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 	}
 	if !SupportedInitially(providerName) {
 		return Registry{}, apierror.Validation("provider is reserved but not enabled yet", map[string]any{
-			"provider": providerName,
+			"provider":  providerName,
 			"supported": []string{ProviderGHCR, ProviderDockerHub, ProviderOCI},
 		})
 	}

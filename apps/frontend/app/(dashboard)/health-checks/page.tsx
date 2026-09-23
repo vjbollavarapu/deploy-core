@@ -2,7 +2,10 @@ import { Card, CardContent } from '@/components/ui/card'
 import { PageContainer } from '@/components/platform/page-container'
 import { PageHeader } from '@/components/platform/page-header'
 import { HealthChecksTable } from '@/components/deploycore/health-checks/health-checks-table'
-import { healthChecks } from '@/lib/mock-data'
+import { healthChecks as rawHealthChecks } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const healthChecks = getDemoFixtures(rawHealthChecks)
 
 export default function HealthChecksPage() {
   return (

@@ -17,7 +17,10 @@ import type {
   DomainRecord,
   LogLine,
 } from '@/lib/types'
-import { projects } from '@/lib/mock-data'
+import { projects as rawProjects } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const projects = getDemoFixtures(rawProjects)
 import { STATUS_CONFIG } from '@/lib/status'
 
 interface ApplicationOverviewProps {
@@ -235,25 +238,29 @@ export function ApplicationOverview({
             </Button>
           </CardHeader>
           <CardContent>
-            <ul className="max-h-56 space-y-1 overflow-y-auto font-mono text-[11px] leading-relaxed">
-              {recentLogs.slice(-12).map((line) => (
-                <li key={line.id} className="flex gap-2 text-muted-foreground">
-                  <span className="shrink-0 tabular">{line.timestamp}</span>
-                  <span
-                    className={
-                      line.level === 'error'
-                        ? 'text-critical'
-                        : line.level === 'warn'
-                          ? 'text-warning'
-                          : 'text-foreground'
-                    }
-                  >
-                    {line.level}
-                  </span>
-                  <span className="truncate text-foreground">{line.message}</span>
-                </li>
-              ))}
-            </ul>
+            {recentLogs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No recent logs recorded.</p>
+            ) : (
+              <ul className="max-h-56 space-y-1 overflow-y-auto font-mono text-[11px] leading-relaxed">
+                {recentLogs.slice(-12).map((line) => (
+                  <li key={line.id} className="flex gap-2 text-muted-foreground">
+                    <span className="shrink-0 tabular">{line.timestamp}</span>
+                    <span
+                      className={
+                        line.level === 'error'
+                          ? 'text-critical'
+                          : line.level === 'warn'
+                            ? 'text-warning'
+                            : 'text-foreground'
+                      }
+                    >
+                      {line.level}
+                    </span>
+                    <span className="truncate text-foreground">{line.message}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
       </div>

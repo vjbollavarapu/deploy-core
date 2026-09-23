@@ -1,6 +1,9 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PlatformVersionsList } from '@/components/deploycore/super-admin/platform-versions-list'
-import { platformVersions } from '@/lib/mock-data'
+import { platformVersions as rawPlatformVersions } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const platformVersions = getDemoFixtures(rawPlatformVersions)
 
 export default function AdminVersionsPage() {
   return (

@@ -20,7 +20,7 @@ import type {
   SecretItem,
   Status,
 } from '@/lib/types'
-import { Activity, Database, Globe, KeyRound, Variable } from 'lucide-react'
+import { Activity, Database, Globe, KeyRound, Rocket, Variable } from 'lucide-react'
 
 interface EnvironmentHealthSummaryProps {
   health: Status
@@ -44,7 +44,7 @@ export function EnvironmentHealthSummary({
       <MetricCard
         label="Health"
         value={health === 'healthy' ? 'Healthy' : health === 'degraded' ? 'Degraded' : health === 'failed' ? 'Failed' : 'Unknown'}
-        tone={health === 'failed' ? 'critical' : health === 'degraded' ? 'warning' : 'default'}
+        tone={health === 'failed' ? 'critical' : health === 'degraded' ? 'warning' : health === 'healthy' ? 'success' : 'default'}
         icon={Activity}
       />
       <MetricCard label="Applications" value={String(applicationCount)} />
@@ -183,32 +183,38 @@ export function EnvironmentDomainsPanel({ domains }: { domains: DomainRecord[] }
 }
 
 export function EnvironmentApplicationsHealth({ applications }: { applications: Application[] }) {
+  if (applications.length === 0) {
+    return (
+      <EmptyState
+        icon={Rocket}
+        title="No applications"
+        description="Deploy an application into this environment to begin health monitoring."
+      />
+    )
+  }
+
   return (
     <Card size="sm">
       <CardHeader>
         <CardTitle>Application health</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
-        {applications.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted-foreground">No applications in this environment.</p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {applications.map((app) => (
-              <li key={app.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                <div className="min-w-0">
-                  <Link href={`/applications/${app.id}`} className="text-sm font-medium hover:underline">
-                    {app.name}
-                  </Link>
-                  <p className="text-xs text-muted-foreground">
-                    {app.runtime} · {app.instances} instance{app.instances === 1 ? '' : 's'} · uptime{' '}
-                    {app.uptime}
-                  </p>
-                </div>
-                <StatusBadge status={app.status} />
-              </li>
-            ))}
-          </ul>
-        )}
+        <ul className="divide-y divide-border">
+          {applications.map((app) => (
+            <li key={app.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+              <div className="min-w-0">
+                <Link href={`/applications/${app.id}`} className="text-sm font-medium hover:underline">
+                  {app.name}
+                </Link>
+                <p className="text-xs text-muted-foreground">
+                  {app.runtime} · {app.instances} instance{app.instances === 1 ? '' : 's'} · uptime{' '}
+                  {app.uptime}
+                </p>
+              </div>
+              <StatusBadge status={app.status} />
+            </li>
+          ))}
+        </ul>
       </CardContent>
     </Card>
   )

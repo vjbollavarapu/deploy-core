@@ -1,14 +1,16 @@
 import type { ReactNode } from 'react'
 import { notFound } from 'next/navigation'
-import { RefreshCw, Terminal } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { PageContainer } from '@/components/platform/page-container'
 import { ProviderBadge } from '@/components/platform/provider-badge'
 import { ResourceHeader } from '@/components/platform/resource-header'
+import { ServerHeaderActions } from '@/components/deploycore/servers/server-header-actions'
 import { ServerSubnav } from '@/components/platform/server-subnav'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { findServer } from '@/lib/servers'
-import { servers } from '@/lib/mock-data'
+import { servers as rawServers } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const servers = getDemoFixtures(rawServers)
 
 export default async function ServerLayout({
   children,
@@ -44,18 +46,7 @@ export default async function ServerLayout({
             <span>{server.containers} containers</span>
           </div>
         }
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline">
-              <Terminal data-icon="inline-start" />
-              Console
-            </Button>
-            <Button size="sm" variant="outline">
-              <RefreshCw data-icon="inline-start" />
-              Restart agent
-            </Button>
-          </div>
-        }
+        actions={<ServerHeaderActions server={server} />}
       />
       <ServerSubnav serverId={serverId} />
       {children}

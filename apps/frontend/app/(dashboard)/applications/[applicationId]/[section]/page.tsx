@@ -1,7 +1,5 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import {
-  Braces,
   GitBranch,
   GitCommitVertical,
   Globe,
@@ -22,7 +20,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { ApplicationLogsPanel } from '@/components/deploycore/applications/application-logs-panel'
 import { ApplicationMetricsPanel } from '@/components/deploycore/applications/application-metrics'
+import { ApplicationSettingsPanel } from '@/components/deploycore/applications/application-settings-panel'
 import { DeploymentsTable } from '@/components/deploycore/deployments/deployments-table'
 import { DomainsTable } from '@/components/deploycore/domains/domains-table'
 import { EnvironmentVariablesEditor } from '@/components/deploycore/environment-variables/environment-variables-editor'
@@ -139,19 +139,8 @@ export default async function ApplicationSectionPage({
             application-specific values.
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
-          {variables.length === 0 ? (
-            <div className="p-4">
-              <EmptyState
-                icon={Braces}
-                title="No variables"
-                description="Environment variables scoped to this application will appear here."
-                className="border-0"
-              />
-            </div>
-          ) : (
-            <EnvironmentVariablesEditor initialVariables={variables} />
-          )}
+        <CardContent className="p-4 pt-0">
+          <EnvironmentVariablesEditor initialVariables={variables} />
         </CardContent>
       </Card>
     )
@@ -208,28 +197,30 @@ export default async function ApplicationSectionPage({
               />
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Network</TableHead>
-                  <TableHead>Driver</TableHead>
-                  <TableHead>Scope</TableHead>
-                  <TableHead>Services</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((network) => (
-                  <TableRow key={network.id}>
-                    <TableCell className="font-medium">{network.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{network.driver}</TableCell>
-                    <TableCell className="text-muted-foreground">{network.scope}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {network.connectedServices.join(', ') || '—'}
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Network</TableHead>
+                    <TableHead>Driver</TableHead>
+                    <TableHead>Scope</TableHead>
+                    <TableHead>Services</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((network) => (
+                    <TableRow key={network.id}>
+                      <TableCell className="font-medium">{network.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{network.driver}</TableCell>
+                      <TableCell className="text-muted-foreground">{network.scope}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {network.connectedServices.join(', ') || '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -255,79 +246,50 @@ export default async function ApplicationSectionPage({
               />
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Volume</TableHead>
-                  <TableHead>Mount</TableHead>
-                  <TableHead>Usage</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((volume) => (
-                  <TableRow key={volume.id}>
-                    <TableCell className="font-medium">{volume.name}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {volume.mountPath}
-                    </TableCell>
-                    <TableCell className="tabular text-muted-foreground">
-                      {volume.usedGb}/{volume.totalGb} GB
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={volume.status} />
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Volume</TableHead>
+                    <TableHead>Mount</TableHead>
+                    <TableHead>Usage</TableHead>
+                    <TableHead>Status</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((volume) => (
+                    <TableRow key={volume.id}>
+                      <TableCell className="font-medium">{volume.name}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {volume.mountPath}
+                      </TableCell>
+                      <TableCell className="tabular text-muted-foreground">
+                        {volume.usedGb}/{volume.totalGb} GB
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={volume.status} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
     )
   }
 
+  if (section === 'logs') {
+    return <ApplicationLogsPanel application={application} />
+  }
+
+  if (section === 'metrics') {
+    return <ApplicationMetricsPanel application={application} />
+  }
+
   if (section === 'settings') {
-    return (
-      <div className="flex flex-col gap-4">
-        <Card size="sm">
-          <CardHeader>
-            <CardTitle>Application settings</CardTitle>
-            <CardDescription>Identity and runtime configuration for {application.name}.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DetailList
-              columns={2}
-              items={[
-                { label: 'Name', value: application.name },
-                { label: 'Runtime', value: application.runtime },
-                {
-                  label: 'Project',
-                  value: (
-                    <Link href="/projects" className="hover:underline">
-                      {application.project}
-                    </Link>
-                  ),
-                },
-                { label: 'Environment', value: application.environment },
-                { label: 'Server', value: application.server },
-                { label: 'Instances', value: String(application.instances) },
-                { label: 'Repository', value: application.repo },
-                { label: 'Branch', value: application.branch },
-              ]}
-            />
-          </CardContent>
-        </Card>
-        <Card size="sm" className="border-critical/30">
-          <CardHeader>
-            <CardTitle className="text-critical">Danger zone</CardTitle>
-            <CardDescription>
-              Destructive actions for this application require confirmation and will be wired to the API later.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    )
+    return <ApplicationSettingsPanel application={application} />
   }
 
   notFound()

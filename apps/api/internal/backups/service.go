@@ -15,11 +15,13 @@ import (
 	"github.com/deploycore/deploy-core/apps/api/internal/webhooks"
 	"github.com/deploycore/deploy-core/apps/api/pkg/apierror"
 	"github.com/deploycore/deploy-core/apps/api/pkg/requestid"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 )
 
 type CommandStore interface {
 	Create(ctx context.Context, cmd agentcmd.Command) (agentcmd.Command, error)
+	Get(ctx context.Context, id uuid.UUID) (agentcmd.Command, error)
 }
 
 type JobEnqueuer interface {
@@ -145,7 +147,7 @@ func (s *Service) CreateBackup(ctx context.Context, actorID uuid.UUID, in Create
 	now := s.now().UTC()
 	b.Status = StatusRunning
 	b.StartedAt = &now
-	cmd, err := s.issue(ctx, b.OrganizationID, b.ServerID, agentcmd.OpCreateBackup, map[string]any{
+	cmd, err := s.issue(ctx, b.OrganizationID, b.ServerID, protocol.OpCreateBackup, map[string]any{
 		"backupId":        b.ID.String(),
 		"databaseId":      b.ResourceID.String(),
 		"type":            b.Type,
@@ -216,7 +218,7 @@ func (s *Service) DeleteBackup(ctx context.Context, actorID, id uuid.UUID, meta 
 func (s *Service) CreateRestore(ctx context.Context, actorID uuid.UUID, in CreateRestoreInput, meta AuditMeta) (Restore, error) {
 	if strings.TrimSpace(in.Confirm) != RestoreConfirmPhrase {
 		return Restore{}, apierror.Validation("destructive restore requires confirm field set to RESTORE", map[string]any{
-			"field":   "confirm",
+			"field":    "confirm",
 			"required": RestoreConfirmPhrase,
 		})
 	}
@@ -243,6 +245,17 @@ func (s *Service) CreateRestore(ctx context.Context, actorID uuid.UUID, in Creat
 	}
 	if target.OrganizationID != b.OrganizationID {
 		return Restore{}, apierror.Forbidden("target database is outside backup organization")
+	}
+	// Local destination artifacts are host-scoped; restore must target the source
+	// database on the same server that produced the backup.
+	if target.ID != b.ResourceID {
+		return Restore{}, apierror.Validation("restore target must be the source database of the backup", map[string]any{
+			"field":    "targetDatabaseId",
+			"backupOf": b.ResourceID.String(),
+		})
+	}
+	if target.ServerID != b.ServerID {
+		return Restore{}, apierror.Conflict("restore target must be on the same server as the backup")
 	}
 
 	rest, err := s.repo.CreateRestore(ctx, Restore{
@@ -290,7 +303,7 @@ func (s *Service) CreateRestore(ctx context.Context, actorID uuid.UUID, in Creat
 	now := s.now().UTC()
 	rest.Status = RestoreRunning
 	rest.StartedAt = &now
-	cmd, err := s.issue(ctx, rest.OrganizationID, rest.ServerID, agentcmd.OpRestoreBackup, map[string]any{
+	cmd, err := s.issue(ctx, rest.OrganizationID, rest.ServerID, protocol.OpRestoreBackup, map[string]any{
 		"restoreId":         rest.ID.String(),
 		"backupId":          b.ID.String(),
 		"targetDatabaseId":  target.ID.String(),
@@ -361,7 +374,7 @@ func (s *Service) ProcessBackupJob(ctx context.Context, job jobs.Job) error {
 		now := s.now().UTC()
 		b.Status = StatusRunning
 		b.StartedAt = &now
-		cmd, err := s.issue(ctx, b.OrganizationID, b.ServerID, agentcmd.OpCreateBackup, map[string]any{
+		cmd, err := s.issue(ctx, b.OrganizationID, b.ServerID, protocol.OpCreateBackup, map[string]any{
 			"backupId":        b.ID.String(),
 			"databaseId":      b.ResourceID.String(),
 			"type":            b.Type,
@@ -380,6 +393,33 @@ func (s *Service) ProcessBackupJob(ctx context.Context, job jobs.Job) error {
 			return err
 		}
 		return jobs.ErrRetryLater
+	}
+
+	// If the agent command already terminalized (including in-flight expiry→failed),
+	// stop soft-retrying forever.
+	cmd, err := s.commands.Get(ctx, *b.CommandID)
+	if err == nil {
+		switch cmd.Status {
+		case protocol.StatusCompleted, protocol.StatusFailed, protocol.StatusExpired, protocol.StatusCancelled:
+			if b.Status == StatusRunning || b.Status == StatusQueued || b.Status == StatusPending {
+				// Completion hook may lag one tick; re-check after soft delay once more
+				// only when backup still non-terminal — fail closed if command failed/expired.
+				if cmd.Status != protocol.StatusCompleted {
+					b.Status = StatusFailed
+					if cmd.ErrorMessage != nil {
+						b.LastError = *cmd.ErrorMessage
+					} else {
+						b.LastError = "backup command " + cmd.Status
+					}
+					finished := s.now().UTC()
+					b.CompletedAt = &finished
+					_, _ = s.repo.UpdateBackup(ctx, b)
+					s.emitBackupFailed(ctx, b)
+					return errors.New(b.LastError)
+				}
+			}
+			return nil
+		}
 	}
 
 	// Waiting for agent completion hook to flip status.
@@ -415,14 +455,14 @@ func (s *Service) ProcessRestoreJob(ctx context.Context, job jobs.Job) error {
 		now := s.now().UTC()
 		r.Status = RestoreRunning
 		r.StartedAt = &now
-		cmd, err := s.issue(ctx, r.OrganizationID, r.ServerID, agentcmd.OpRestoreBackup, map[string]any{
-			"restoreId":          r.ID.String(),
-			"backupId":           b.ID.String(),
-			"targetDatabaseId":   r.TargetResourceID.String(),
-			"destinationType":    b.DestinationType,
-			"destinationUri":     b.DestinationURI,
-			"checksum":           b.Checksum,
-			"requireValidation":  true,
+		cmd, err := s.issue(ctx, r.OrganizationID, r.ServerID, protocol.OpRestoreBackup, map[string]any{
+			"restoreId":         r.ID.String(),
+			"backupId":          b.ID.String(),
+			"targetDatabaseId":  r.TargetResourceID.String(),
+			"destinationType":   b.DestinationType,
+			"destinationUri":    b.DestinationURI,
+			"checksum":          b.Checksum,
+			"requireValidation": true,
 		}, r.CreatedBy)
 		if err != nil {
 			r.Status = RestoreFailed
@@ -436,14 +476,36 @@ func (s *Service) ProcessRestoreJob(ctx context.Context, job jobs.Job) error {
 		}
 		return jobs.ErrRetryLater
 	}
+
+	cmd, err := s.commands.Get(ctx, *r.CommandID)
+	if err == nil {
+		switch cmd.Status {
+		case protocol.StatusCompleted, protocol.StatusFailed, protocol.StatusExpired, protocol.StatusCancelled:
+			if r.Status == RestoreRunning || r.Status == RestoreQueued || r.Status == RestorePending || r.Status == RestoreValidating {
+				if cmd.Status != protocol.StatusCompleted {
+					r.Status = RestoreFailed
+					if cmd.ErrorMessage != nil {
+						r.LastError = *cmd.ErrorMessage
+					} else {
+						r.LastError = "restore command " + cmd.Status
+					}
+					finished := s.now().UTC()
+					r.CompletedAt = &finished
+					_, _ = s.repo.UpdateRestore(ctx, r)
+					return errors.New(r.LastError)
+				}
+			}
+			return nil
+		}
+	}
 	return jobs.ErrRetryLater
 }
 
 func (s *Service) HandleCommandCompletion(ctx context.Context, cmd agentcmd.Command) error {
 	switch cmd.Operation {
-	case agentcmd.OpCreateBackup:
+	case protocol.OpCreateBackup:
 		return s.onBackupCommand(ctx, cmd)
-	case agentcmd.OpRestoreBackup:
+	case protocol.OpRestoreBackup:
 		return s.onRestoreCommand(ctx, cmd)
 	default:
 		return nil
@@ -461,7 +523,7 @@ func (s *Service) onBackupCommand(ctx context.Context, cmd agentcmd.Command) err
 		return nil
 	}
 	now := s.now().UTC()
-	if cmd.Status == agentcmd.StatusCompleted {
+	if cmd.Status == protocol.StatusCompleted {
 		checksum := ""
 		var size *int64
 		if cmd.Result != nil {
@@ -500,7 +562,7 @@ func (s *Service) onBackupCommand(ctx context.Context, cmd agentcmd.Command) err
 		}
 		return err
 	}
-	if cmd.Status == agentcmd.StatusFailed {
+	if cmd.Status == protocol.StatusFailed {
 		msg := "backup failed"
 		if cmd.ErrorMessage != nil {
 			msg = *cmd.ErrorMessage
@@ -528,7 +590,7 @@ func (s *Service) onRestoreCommand(ctx context.Context, cmd agentcmd.Command) er
 		return nil
 	}
 	now := s.now().UTC()
-	if cmd.Status == agentcmd.StatusCompleted {
+	if cmd.Status == protocol.StatusCompleted {
 		r.Status = RestoreValidating
 		validated := false
 		if cmd.Result != nil {
@@ -556,7 +618,7 @@ func (s *Service) onRestoreCommand(ctx context.Context, cmd agentcmd.Command) er
 		_, err = s.repo.UpdateRestore(ctx, r)
 		return err
 	}
-	if cmd.Status == agentcmd.StatusFailed {
+	if cmd.Status == protocol.StatusFailed {
 		msg := "restore failed"
 		if cmd.ErrorMessage != nil {
 			msg = *cmd.ErrorMessage
@@ -585,7 +647,7 @@ func (s *Service) issue(ctx context.Context, orgID, serverID uuid.UUID, op strin
 		OrganizationID: orgID,
 		ServerID:       serverID,
 		Operation:      op,
-		SchemaVersion:  agentcmd.SchemaVersion,
+		SchemaVersion:  protocol.SchemaVersion,
 		Payload:        payload,
 		IssuedAt:       now,
 		ExpiresAt:      now.Add(60 * time.Minute),

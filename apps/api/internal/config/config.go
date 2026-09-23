@@ -14,27 +14,27 @@ import (
 
 // Config holds process configuration loaded from the environment.
 type Config struct {
-	Env                string
-	HTTPAddr           string
-	DatabaseURL        string
-	LogLevel           string
-	ShutdownTimeout    time.Duration
-	CORSAllowedOrigins []string
-	ReadHeaderTimeout  time.Duration
-	ReadTimeout        time.Duration
-	WriteTimeout       time.Duration
-	IdleTimeout        time.Duration
+	Env                 string
+	HTTPAddr            string
+	DatabaseURL         string
+	LogLevel            string
+	ShutdownTimeout     time.Duration
+	CORSAllowedOrigins  []string
+	ReadHeaderTimeout   time.Duration
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	IdleTimeout         time.Duration
 	MaxRequestBodyBytes int64
 
-	AuthTokenSecret       string
-	AccessTokenTTL        time.Duration
-	RefreshTokenTTL       time.Duration
-	PasswordResetTTL      time.Duration
-	AuthRateLimitPerMin   int
-	AuthMinPasswordLength int
-	AgentRegistrationTTL  time.Duration
-	AgentHeartbeatRetain  int
-	PublicRateLimitPerMin int
+	AuthTokenSecret           string
+	AccessTokenTTL            time.Duration
+	RefreshTokenTTL           time.Duration
+	PasswordResetTTL          time.Duration
+	AuthRateLimitPerMin       int
+	AuthMinPasswordLength     int
+	AgentRegistrationTTL      time.Duration
+	AgentHeartbeatRetain      int
+	PublicRateLimitPerMin     int
 	GitWebhookRateLimitPerMin int
 
 	SecretsPlatformKey []byte
@@ -49,13 +49,13 @@ type Config struct {
 
 	OrchestratorSimulateAgent bool
 
-	ReconcileEnabled              bool
-	ReconcileInterval             time.Duration
-	AgentHeartbeatTTL             time.Duration
-	ReconcileMaxAppActions        int
-	ReconcileMaxRestartActions    int
-	ReconcileRestartMaxAttempts   int
-	ReconcileRestartBackoffBase   time.Duration
+	ReconcileEnabled            bool
+	ReconcileInterval           time.Duration
+	AgentHeartbeatTTL           time.Duration
+	ReconcileMaxAppActions      int
+	ReconcileMaxRestartActions  int
+	ReconcileRestartMaxAttempts int
+	ReconcileRestartBackoffBase time.Duration
 }
 
 // Load reads configuration from environment variables.
@@ -92,7 +92,8 @@ func Load() (Config, error) {
 		JobPollInterval:           durationEnv("JOB_POLL_INTERVAL", time.Second),
 		JobRetryBaseDelay:         durationEnv("JOB_RETRY_BASE_DELAY", 5*time.Second),
 		JobDeferDelay:             durationEnv("JOB_DEFER_DELAY", time.Minute),
-		OrchestratorSimulateAgent: boolEnv("ORCHESTRATOR_SIMULATE_AGENT", true),
+		// Default OFF: simulation must be explicitly enabled (never accidental production success).
+		OrchestratorSimulateAgent:   boolEnv("ORCHESTRATOR_SIMULATE_AGENT", false),
 		ReconcileEnabled:            boolEnv("RECONCILE_ENABLED", true),
 		ReconcileInterval:           durationEnv("RECONCILE_INTERVAL", 30*time.Second),
 		AgentHeartbeatTTL:           durationEnv("AGENT_HEARTBEAT_TTL", 90*time.Second),

@@ -47,7 +47,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	if err := rbac.EnsureSeeded(ctx, pool); err != nil {
 		t.Fatalf("rbac seed: %v", err)
 	}
-	_, _ = pool.Exec(ctx, `
+	_, err = pool.Exec(ctx, `
 		DELETE FROM outgoing_webhook_deliveries;
 		DELETE FROM outgoing_webhooks;
 		DELETE FROM jobs;
@@ -62,6 +62,14 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		DELETE FROM sessions;
 		DELETE FROM organizations;
 		DELETE FROM users;`)
+	if err != nil {
+		if _, jerr := pool.Exec(ctx, `DELETE FROM jobs`); jerr != nil {
+			t.Fatalf("cleanup jobs: %v (batch: %v)", jerr, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM jobs`); err != nil {
+		t.Fatalf("cleanup jobs: %v", err)
+	}
 	return pool
 }
 
@@ -149,9 +157,9 @@ func TestOutgoingWebhookHMACDelivery(t *testing.T) {
 	list := doJSON(t, srv, http.MethodGet, "/api/v1/integrations/webhooks/deliveries?organizationId="+orgID, nil, ownerTok)
 	var delOut struct {
 		Items []struct {
-			ID     string         `json:"id"`
-			Status string         `json:"status"`
-			JobID  *string        `json:"jobId"`
+			ID      string         `json:"id"`
+			Status  string         `json:"status"`
+			JobID   *string        `json:"jobId"`
 			Payload map[string]any `json:"payload"`
 		} `json:"items"`
 	}
@@ -163,9 +171,20 @@ func TestOutgoingWebhookHMACDelivery(t *testing.T) {
 		t.Fatal("password leaked")
 	}
 
+	wantID := uuid.MustParse(*delOut.Items[0].JobID)
 	job, err := queue.Claim(context.Background(), "b26-worker", 30*time.Second)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
+	}
+	for attempt := 0; job.ID != wantID && attempt < 32; attempt++ {
+		_, _ = queue.Complete(context.Background(), job.ID, "b26-worker")
+		job, err = queue.Claim(context.Background(), "b26-worker", 30*time.Second)
+		if err != nil {
+			t.Fatalf("claim retry: %v", err)
+		}
+	}
+	if job.ID != wantID {
+		t.Fatalf("claimed unexpected job type=%s id=%s want=%s", job.Type, job.ID, wantID)
 	}
 	if err := svc.ProcessDeliveryJob(context.Background(), job); err != nil {
 		t.Fatalf("process: %v", err)

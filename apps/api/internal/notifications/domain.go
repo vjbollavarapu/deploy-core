@@ -74,18 +74,18 @@ type Channel struct {
 }
 
 type Policy struct {
-	ID                  uuid.UUID
-	OrganizationID      uuid.UUID
-	Name                string
-	EventTypes          []string
-	ResourceFilters     map[string]any
-	EnvironmentFilters  map[string]any
-	ChannelIDs          []uuid.UUID
-	Enabled             bool
-	CreatedBy           *uuid.UUID
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	DeletedAt           *time.Time
+	ID                 uuid.UUID
+	OrganizationID     uuid.UUID
+	Name               string
+	EventTypes         []string
+	ResourceFilters    map[string]any
+	EnvironmentFilters map[string]any
+	ChannelIDs         []uuid.UUID
+	Enabled            bool
+	CreatedBy          *uuid.UUID
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	DeletedAt          *time.Time
 }
 
 type Delivery struct {
@@ -116,12 +116,12 @@ type CreateChannelInput struct {
 }
 
 type UpdateChannelInput struct {
-	Name           *string
-	Config         map[string]any
-	Credential     *string
+	Name            *string
+	Config          map[string]any
+	Credential      *string
 	ClearCredential bool
-	Enabled        *bool
-	Status         *string
+	Enabled         *bool
+	Status          *string
 }
 
 type CreatePolicyInput struct {

@@ -14,13 +14,13 @@ import (
 )
 
 type Service struct {
-	store    Store
-	access   *PostgresAccessor
-	authz    *rbac.Authorizer
-	log      *slog.Logger
-	cfg      Config
+	store     Store
+	access    *PostgresAccessor
+	authz     *rbac.Authorizer
+	log       *slog.Logger
+	cfg       Config
 	pollEvery time.Duration
-	now      func() time.Time
+	now       func() time.Time
 }
 
 func NewService(store Store, access *PostgresAccessor, authz *rbac.Authorizer, log *slog.Logger, cfg Config) *Service {
@@ -116,7 +116,7 @@ func (s *Service) IngestFromAgent(ctx context.Context, agent agents.Agent, in In
 	if len(in.Entries) > 500 {
 		return 0, apierror.Validation("too many entries in one batch", map[string]any{"field": "entries", "max": 500})
 	}
-	orgID, err := s.access.GetApplicationOrg(ctx, in.ApplicationID)
+	orgID, serverID, err := s.access.GetApplicationPlacement(ctx, in.ApplicationID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return 0, apierror.NotFoundCode(apierror.CodeApplicationNotFound, "application not found")
@@ -125,6 +125,10 @@ func (s *Service) IngestFromAgent(ctx context.Context, agent agents.Agent, in In
 	}
 	if orgID != agent.OrganizationID {
 		return 0, apierror.Forbidden("application is outside agent organization")
+	}
+	// R12: Agent may only write logs for applications assigned to its server.
+	if serverID == nil || *serverID != agent.ServerID {
+		return 0, apierror.Forbidden("application is not assigned to this agent server")
 	}
 	if in.DeploymentID != nil {
 		d, err := s.access.GetDeployment(ctx, *in.DeploymentID)

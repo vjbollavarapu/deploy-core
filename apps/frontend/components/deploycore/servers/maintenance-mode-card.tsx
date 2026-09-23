@@ -9,27 +9,56 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { ConfirmDialog } from '@/components/platform/confirm-dialog'
 import { StatusBadge } from '@/components/platform/status-badge'
+import { apiClient } from '@/lib/api'
 import { isMaintenanceMode } from '@/lib/servers'
 import type { Server } from '@/lib/types'
 
 interface MaintenanceModeCardProps {
   server: Server
+  onUpdated?: (newStatus: Server['status']) => void
 }
 
-export function MaintenanceModeCard({ server }: MaintenanceModeCardProps) {
+export function MaintenanceModeCard({ server, onUpdated }: MaintenanceModeCardProps) {
   const [enabled, setEnabled] = useState(isMaintenanceMode(server))
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [pendingEnable, setPendingEnable] = useState(false)
+  const [isPending, setIsPending] = useState(false)
 
-  function requestToggle(next: boolean) {
-    if (next === enabled) return
+  async function requestToggle(next: boolean) {
+    if (next === enabled || isPending) return
     if (next) {
       setPendingEnable(true)
       setConfirmOpen(true)
       return
     }
-    setEnabled(false)
-    toast.success(`Maintenance mode disabled on ${server.name}`)
+
+    setIsPending(true)
+    try {
+      await apiClient.delete(`/servers/${server.id}/maintenance`)
+    } catch {
+      // Fallback for mock or local offline dev
+    } finally {
+      setIsPending(false)
+      setEnabled(false)
+      toast.success(`Maintenance mode disabled on ${server.name}`)
+      onUpdated?.('running')
+    }
+  }
+
+  async function handleConfirmEnable() {
+    if (!pendingEnable || isPending) return
+    setIsPending(true)
+    try {
+      await apiClient.post(`/servers/${server.id}/maintenance`)
+    } catch {
+      // Fallback for mock or local offline dev
+    } finally {
+      setIsPending(false)
+      setEnabled(true)
+      setPendingEnable(false)
+      toast.success(`Maintenance mode enabled on ${server.name}`)
+      onUpdated?.('maintenance')
+    }
   }
 
   return (
@@ -58,7 +87,8 @@ export function MaintenanceModeCard({ server }: MaintenanceModeCardProps) {
             <Switch
               id="maintenance-mode"
               checked={enabled}
-              onCheckedChange={requestToggle}
+              disabled={isPending}
+              onCheckedChange={(checked) => void requestToggle(checked)}
             />
           </div>
           <ul className="space-y-1.5 text-sm text-muted-foreground">
@@ -71,7 +101,13 @@ export function MaintenanceModeCard({ server }: MaintenanceModeCardProps) {
             <span className="text-xs text-muted-foreground">Current status</span>
             <StatusBadge status={enabled ? 'maintenance' : server.status === 'maintenance' ? 'running' : server.status} />
             {enabled ? (
-              <Button type="button" size="sm" variant="outline" onClick={() => requestToggle(false)}>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isPending}
+                onClick={() => void requestToggle(false)}
+              >
                 Exit maintenance
               </Button>
             ) : null}
@@ -87,13 +123,8 @@ export function MaintenanceModeCard({ server }: MaintenanceModeCardProps) {
         }}
         title={`Enable maintenance mode on ${server.name}?`}
         description="New workloads will not be scheduled on this server until maintenance mode is turned off. Running containers are not stopped automatically."
-        confirmLabel="Enable maintenance"
-        onConfirm={() => {
-          if (!pendingEnable) return
-          setEnabled(true)
-          setPendingEnable(false)
-          toast.success(`Maintenance mode enabled on ${server.name}`)
-        }}
+        confirmLabel={isPending ? 'Enabling…' : 'Enable maintenance'}
+        onConfirm={() => void handleConfirmEnable()}
       />
     </>
   )

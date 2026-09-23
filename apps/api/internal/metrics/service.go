@@ -14,11 +14,11 @@ import (
 )
 
 type Service struct {
-	repo Repository
-	ts   TimeSeriesStore
+	repo  Repository
+	ts    TimeSeriesStore
 	authz *rbac.Authorizer
-	log  *slog.Logger
-	now  func() time.Time
+	log   *slog.Logger
+	now   func() time.Time
 }
 
 func NewService(repo Repository, ts TimeSeriesStore, authz *rbac.Authorizer, log *slog.Logger) *Service {
@@ -154,7 +154,7 @@ func (s *Service) IngestFromAgent(ctx context.Context, agent agents.Agent, in Ag
 			NetworkTxBytes:   in.Server.NetworkTxBytes,
 			ContainerCount:   in.Server.ContainerCount,
 			Source:           SourceAgent,
-			Payload:          in.Server.Payload,
+			Payload:          boundPayload(in.Server.Payload),
 		}
 		if _, err := s.repo.UpsertServerSnapshot(ctx, snap); err != nil {
 			return err
@@ -171,7 +171,7 @@ func (s *Service) IngestFromAgent(ctx context.Context, agent agents.Agent, in Ag
 			return apierror.Validation("containerId is required", map[string]any{"field": "containerId"})
 		}
 		if c.ApplicationID != nil {
-			appOrg, err := s.repo.GetApplicationOrg(ctx, *c.ApplicationID)
+			appOrg, appServer, err := s.repo.GetApplicationPlacement(ctx, *c.ApplicationID)
 			if err != nil {
 				if errors.Is(err, ErrNotFound) {
 					return apierror.NotFoundCode(apierror.CodeApplicationNotFound, "application not found")
@@ -180,6 +180,9 @@ func (s *Service) IngestFromAgent(ctx context.Context, agent agents.Agent, in Ag
 			}
 			if appOrg != orgID {
 				return apierror.Forbidden("application is outside agent organization")
+			}
+			if appServer == nil || *appServer != serverID {
+				return apierror.Forbidden("application is not assigned to this agent server")
 			}
 		}
 		at := now
@@ -204,7 +207,7 @@ func (s *Service) IngestFromAgent(ctx context.Context, agent agents.Agent, in Ag
 			NetworkTxBytes:   c.NetworkTxBytes,
 			RestartCount:     c.RestartCount,
 			Status:           status,
-			Payload:          c.Payload,
+			Payload:          boundPayload(c.Payload),
 		}
 		if _, err := s.repo.UpsertContainerSnapshot(ctx, snap); err != nil {
 			return err
@@ -216,6 +219,28 @@ func (s *Service) IngestFromAgent(ctx context.Context, agent agents.Agent, in Ag
 		_ = s.ts.Write(ctx, samples)
 	}
 	return nil
+}
+
+// maxMetricPayloadKeys caps free-form telemetry map cardinality (R10).
+const maxMetricPayloadKeys = 32
+
+func boundPayload(in map[string]any) map[string]any {
+	if in == nil {
+		return map[string]any{}
+	}
+	if len(in) <= maxMetricPayloadKeys {
+		return in
+	}
+	out := make(map[string]any, maxMetricPayloadKeys)
+	n := 0
+	for k, v := range in {
+		out[k] = v
+		n++
+		if n >= maxMetricPayloadKeys {
+			break
+		}
+	}
+	return out
 }
 
 // UpsertFromHeartbeat keeps summary metrics warm from B7 heartbeats without

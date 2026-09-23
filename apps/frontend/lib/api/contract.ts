@@ -248,3 +248,133 @@ export interface Page<T> {
 /** Permission keys enforced by the control plane (org-scoped). */
 export type PermissionKey = Permission
 
+export interface Project {
+  id?: UUID
+  organizationId?: UUID
+  name?: string
+  slug?: string
+  description?: string
+  createdBy?: UUID
+  createdAt?: Timestamp
+  updatedAt?: Timestamp
+}
+
+export interface UpdateProjectRequest {
+  name?: string
+  slug?: string
+  description?: string
+}
+
+export interface Environment {
+  id?: UUID
+  organizationId?: UUID
+  projectId?: UUID
+  name?: string
+  slug?: string
+  kind?: EnvironmentKind
+  createdAt?: Timestamp
+  updatedAt?: Timestamp
+}
+
+export interface CreateEnvironmentRequest {
+  name: string
+  slug: string
+  kind: EnvironmentKind
+}
+
+export interface UpdateEnvironmentRequest {
+  name?: string
+  slug?: string
+  kind?: EnvironmentKind
+}
+
+export interface Database {
+  id?: UUID
+  organizationId?: UUID
+  projectId?: UUID
+  environmentId?: UUID
+  serverId?: UUID
+  name?: string
+  engine?: string
+  engineVersion?: string
+  databaseName?: string
+  username?: string
+  storageVolumeName?: string
+  volumeProtected?: boolean
+  cpuMillis?: number | null
+  memoryBytes?: number | null
+  containerRuntimeId?: string | null
+  status?: DatabaseStatus
+  backupPolicy?: Record<string, unknown>
+  provisionCommandId?: string | null
+  lastError?: string
+  hasCredential?: boolean
+  createdBy?: UUID
+  createdAt?: Timestamp
+  updatedAt?: Timestamp
+}
+
+export interface CreateDatabaseRequest {
+  organizationId?: UUID
+  projectId?: UUID
+  environmentId: UUID
+  serverId: UUID
+  name: string
+  engine: string
+  engineVersion?: string
+  databaseName?: string
+  username?: string
+  password?: string
+  storageVolume?: string
+  cpuMillis?: number | null
+  memoryBytes?: number | null
+  backupPolicy?: Record<string, unknown>
+}
+
+export interface UpdateDatabaseRequest {
+  name?: string
+  cpuMillis?: number | null
+  memoryBytes?: number | null
+  backupPolicy?: Record<string, unknown>
+  status?: DatabaseStatus
+  rotatePassword?: string
+}
+
+export interface DomainRoutingConfig {
+  healthCheckPath?: string
+  stripPrefix?: boolean
+  customHeaders?: Record<string, string>
+}
+
+export interface Domain {
+  id?: UUID
+  organizationId?: UUID
+  applicationId?: UUID
+  environmentId?: UUID
+  hostname?: string
+  internalPort?: number
+  isPrimary?: boolean
+  forceHttps?: boolean
+  dnsStatus?: DNSStatus
+  tlsStatus?: TLSStatus
+  routing?: DomainRoutingConfig
+  createdAt?: Timestamp
+  updatedAt?: Timestamp
+}
+
+export interface CreateDomainRequest {
+  hostname: string
+  internalPort?: number
+  isPrimary?: boolean
+  forceHttps?: boolean
+}
+
+export interface UpdateDomainRequest {
+  hostname?: string
+  internalPort?: number
+  isPrimary?: boolean
+  forceHttps?: boolean
+  dnsStatus?: DNSStatus
+  tlsStatus?: TLSStatus
+}
+

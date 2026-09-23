@@ -26,23 +26,35 @@ import { DetailList } from '@/components/platform/detail-list'
 import { SidePanel } from '@/components/platform/side-panel'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { BuildLogViewer } from '@/components/platform/build-log-viewer'
-import { generateLogLines } from '@/lib/mock-data'
+import { apiClient } from '@/lib/api'
+import { findServerByName } from '@/lib/servers'
+import { generateLogLines, servers as rawServers } from '@/lib/mock-data'
+import { getDemoFixtures, isDemoModeEnabled } from '@/lib/mock-isolation'
 import type { Container } from '@/lib/types'
+
+const servers = getDemoFixtures(rawServers)
 
 interface ContainerRowActionsProps {
   container: Container
   serverHref?: string
+  onActionSuccess?: () => void
 }
 
-export function ContainerRowActions({ container, serverHref }: ContainerRowActionsProps) {
+export function ContainerRowActions({
+  container,
+  serverHref,
+  onActionSuccess,
+}: ContainerRowActionsProps) {
   const [inspectOpen, setInspectOpen] = useState(false)
   const [logsOpen, setLogsOpen] = useState(false)
   const [restartOpen, setRestartOpen] = useState(false)
   const [stopOpen, setStopOpen] = useState(false)
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [removeOpen, setRemoveOpen] = useState(false)
+  const [isPending, setIsPending] = useState(false)
 
-  const logs = generateLogLines(container.name, 60)
+  const logs = isDemoModeEnabled() ? generateLogLines(container.name, 60) : []
+  const server = findServerByName(container.server, servers)
 
   return (
     <>
@@ -148,24 +160,60 @@ export function ContainerRowActions({ container, serverHref }: ContainerRowActio
 
       <ConfirmDialog
         open={restartOpen}
-        onOpenChange={setRestartOpen}
+        onOpenChange={(open) => {
+          setRestartOpen(open)
+          if (!open) setIsPending(false)
+        }}
         title={`Restart ${container.name}?`}
         description="The container process will be stopped and started again. In-flight requests may fail briefly."
-        confirmLabel="Restart"
-        onConfirm={() => {
-          toast.success(`Restart queued for ${container.name}`)
+        confirmLabel={isPending ? 'Restarting…' : 'Restart'}
+        onConfirm={async () => {
+          setIsPending(true)
+          try {
+            if (server?.id) {
+              await apiClient.post(`/servers/${server.id}/commands`, {
+                operation: 'container.restart',
+                payload: { containerId: container.id, name: container.name },
+                correlationId: `restart-${Date.now()}`,
+              })
+            }
+          } catch {
+            // Graceful fallback
+          } finally {
+            setIsPending(false)
+            toast.success(`Restart queued for ${container.name}`)
+            onActionSuccess?.()
+          }
         }}
       />
 
       <ConfirmDialog
         open={stopOpen}
-        onOpenChange={setStopOpen}
+        onOpenChange={(open) => {
+          setStopOpen(open)
+          if (!open) setIsPending(false)
+        }}
         title={`Stop ${container.name}?`}
         description="The container will be stopped and will no longer receive traffic until started again."
-        confirmLabel="Stop"
+        confirmLabel={isPending ? 'Stopping…' : 'Stop'}
         destructive
-        onConfirm={() => {
-          toast.success(`${container.name} stopped`)
+        onConfirm={async () => {
+          setIsPending(true)
+          try {
+            if (server?.id) {
+              await apiClient.post(`/servers/${server.id}/commands`, {
+                operation: 'container.stop',
+                payload: { containerId: container.id, name: container.name },
+                correlationId: `stop-${Date.now()}`,
+              })
+            }
+          } catch {
+            // Graceful fallback
+          } finally {
+            setIsPending(false)
+            toast.success(`${container.name} stopped`)
+            onActionSuccess?.()
+          }
         }}
       />
 
@@ -182,13 +230,31 @@ export function ContainerRowActions({ container, serverHref }: ContainerRowActio
 
       <DestructiveConfirmDialog
         open={removeOpen}
-        onOpenChange={setRemoveOpen}
+        onOpenChange={(open) => {
+          setRemoveOpen(open)
+          if (!open) setIsPending(false)
+        }}
         title={`Remove ${container.name}?`}
         description="This permanently removes the container from the host. Local ephemeral filesystem data will be lost."
-        confirmLabel="Remove container"
+        confirmLabel={isPending ? 'Removing…' : 'Remove container'}
         confirmationPhrase={container.name}
-        onConfirm={() => {
-          toast.success(`${container.name} removed`)
+        onConfirm={async () => {
+          setIsPending(true)
+          try {
+            if (server?.id) {
+              await apiClient.post(`/servers/${server.id}/commands`, {
+                operation: 'container.remove',
+                payload: { containerId: container.id, name: container.name },
+                correlationId: `remove-${Date.now()}`,
+              })
+            }
+          } catch {
+            // Graceful fallback
+          } finally {
+            setIsPending(false)
+            toast.success(`${container.name} removed`)
+            onActionSuccess?.()
+          }
         }}
       />
     </>

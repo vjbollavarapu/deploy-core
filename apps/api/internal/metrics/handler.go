@@ -128,7 +128,7 @@ func (h *Handler) GetApplication(w http.ResponseWriter, r *http.Request) {
 }
 
 type ingestRequest struct {
-	Server     *serverIngestRequest  `json:"server"`
+	Server     *serverIngestRequest     `json:"server"`
 	Containers []containerIngestRequest `json:"containers"`
 }
 

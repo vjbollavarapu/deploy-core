@@ -1,6 +1,9 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { TeamMembersTable } from '@/components/deploycore/teams/team-members-table'
-import { teamMembers } from '@/lib/mock-data'
+import { teamMembers as rawTeamMembers } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const teamMembers = getDemoFixtures(rawTeamMembers)
 
 export default function AdminUsersPage() {
   return (

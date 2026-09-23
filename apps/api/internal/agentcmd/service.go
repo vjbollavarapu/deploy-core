@@ -14,6 +14,7 @@ import (
 	"github.com/deploycore/deploy-core/apps/api/pkg/apierror"
 	"github.com/deploycore/deploy-core/apps/api/pkg/requestid"
 	"github.com/deploycore/deploy-core/apps/api/pkg/validation"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 )
 
@@ -27,12 +28,12 @@ type ServiceConfig struct {
 }
 
 type Service struct {
-	repo  Repository
-	authz *rbac.Authorizer
-	audit *audit.Writer
-	log   *slog.Logger
-	cfg   ServiceConfig
-	now   func() time.Time
+	repo       Repository
+	authz      *rbac.Authorizer
+	audit      *audit.Writer
+	log        *slog.Logger
+	cfg        ServiceConfig
+	now        func() time.Time
 	onComplete CompletionHook
 }
 
@@ -107,7 +108,7 @@ func (s *Service) Issue(ctx context.Context, actorID uuid.UUID, in IssueInput, m
 		OrganizationID: orgID,
 		ServerID:       in.ServerID,
 		Operation:      op,
-		SchemaVersion:  SchemaVersion,
+		SchemaVersion:  protocol.SchemaVersion,
 		Payload:        in.Payload,
 		IssuedAt:       now,
 		ExpiresAt:      now.Add(ttl),
@@ -122,7 +123,7 @@ func (s *Service) Issue(ctx context.Context, actorID uuid.UUID, in IssueInput, m
 		return Command{}, err
 	}
 	s.writeAudit(ctx, &orgID, &actorID, "agent.command.issue", "agent_command", cmd.ID.String(), meta, nil, map[string]any{
-		"operation": op, "serverId": in.ServerID.String(), "schemaVersion": SchemaVersion,
+		"operation": op, "serverId": in.ServerID.String(), "schemaVersion": protocol.SchemaVersion,
 	})
 	return cmd, nil
 }
@@ -182,6 +183,19 @@ func (s *Service) Cancel(ctx context.Context, actorID, commandID uuid.UUID, meta
 func (s *Service) PollPending(ctx context.Context, agent agents.Agent, limit int) ([]Command, error) {
 	now := s.now().UTC()
 	_ = s.repo.ExpirePending(ctx, agent.ServerID, now)
+	// Terminalize stuck in-flight commands and notify completion hooks (backup/db/provision).
+	if stale, err := s.repo.ExpireStaleInFlight(ctx, agent.ServerID, now); err == nil {
+		for _, cmd := range stale {
+			if s.onComplete != nil {
+				if hookErr := s.onComplete(ctx, cmd); hookErr != nil && s.log != nil {
+					s.log.Warn("completion hook after in-flight expiry failed",
+						slog.String("commandId", cmd.ID.String()),
+						slog.String("error", hookErr.Error()),
+					)
+				}
+			}
+		}
+	}
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
@@ -192,12 +206,12 @@ func (s *Service) ReportStatus(ctx context.Context, agent agents.Agent, commandI
 	status = strings.TrimSpace(strings.ToLower(status))
 	var from []string
 	switch status {
-	case StatusAccepted:
-		from = []string{StatusPending}
-	case StatusRunning:
-		from = []string{StatusPending, StatusAccepted}
-	case StatusCompleted, StatusFailed:
-		from = []string{StatusPending, StatusAccepted, StatusRunning}
+	case protocol.StatusAccepted:
+		from = []string{protocol.StatusPending}
+	case protocol.StatusRunning:
+		from = []string{protocol.StatusPending, protocol.StatusAccepted}
+	case protocol.StatusCompleted, protocol.StatusFailed:
+		from = []string{protocol.StatusPending, protocol.StatusAccepted, protocol.StatusRunning}
 	default:
 		return Command{}, apierror.Validation("invalid status", map[string]any{
 			"fields": validation.Errors{{Field: "status", Message: "must be accepted, running, completed, or failed"}},
@@ -217,7 +231,7 @@ func (s *Service) ReportStatus(ctx context.Context, agent agents.Agent, commandI
 	if cmd.ServerID != agent.ServerID {
 		return Command{}, apierror.Forbidden("command does not belong to this agent server")
 	}
-	if cmd.ExpiresAt.Before(s.now().UTC()) && cmd.Status == StatusPending {
+	if cmd.ExpiresAt.Before(s.now().UTC()) && cmd.Status == protocol.StatusPending {
 		_ = s.repo.ExpirePending(ctx, agent.ServerID, s.now().UTC())
 		return Command{}, apierror.Conflict("command expired")
 	}
@@ -229,7 +243,7 @@ func (s *Service) ReportStatus(ctx context.Context, agent agents.Agent, commandI
 		}
 		return Command{}, err
 	}
-	if s.onComplete != nil && (updated.Status == StatusCompleted || updated.Status == StatusFailed) {
+	if s.onComplete != nil && (updated.Status == protocol.StatusCompleted || updated.Status == protocol.StatusFailed) {
 		if hookErr := s.onComplete(ctx, updated); hookErr != nil && s.log != nil {
 			s.log.Warn("command completion hook failed",
 				slog.String("error", hookErr.Error()),

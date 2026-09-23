@@ -43,6 +43,7 @@ type Repository interface {
 	ListInvitations(ctx context.Context, orgID uuid.UUID, limit, offset int) ([]Invitation, int64, error)
 	MarkInvitationAccepted(ctx context.Context, id uuid.UUID, at time.Time) error
 	RevokeOpenInvitationsForEmail(ctx context.Context, orgID uuid.UUID, email string, at time.Time) error
+	RevokeInvitation(ctx context.Context, orgID, invitationID uuid.UUID, at time.Time) error
 }
 
 type PostgresRepository struct {
@@ -396,13 +397,13 @@ func (r *PostgresRepository) ListInvitations(ctx context.Context, orgID uuid.UUI
 	var total int64
 	if err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM organization_invitations
-		WHERE organization_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL`, orgID).Scan(&total); err != nil {
+		WHERE organization_id = $1`, orgID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, organization_id, email, invited_by, expires_at, accepted_at, revoked_at, created_at
 		FROM organization_invitations
-		WHERE organization_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL
+		WHERE organization_id = $1
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3`, orgID, limit, offset)
 	if err != nil {
@@ -449,6 +450,20 @@ func (r *PostgresRepository) RevokeOpenInvitationsForEmail(ctx context.Context, 
 		WHERE organization_id = $1 AND LOWER(email) = LOWER($2)
 		  AND accepted_at IS NULL AND revoked_at IS NULL`, orgID, email, at)
 	return err
+}
+
+func (r *PostgresRepository) RevokeInvitation(ctx context.Context, orgID, invitationID uuid.UUID, at time.Time) error {
+	ct, err := r.pool.Exec(ctx, `
+		UPDATE organization_invitations SET revoked_at = $3
+		WHERE organization_id = $1 AND id = $2
+		  AND accepted_at IS NULL AND revoked_at IS NULL`, orgID, invitationID, at)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *PostgresRepository) memberRoles(ctx context.Context, memberID uuid.UUID) ([]Role, error) {

@@ -51,4 +51,17 @@ type HeartbeatInput struct {
 	ContainerCount  *int
 	UptimeSeconds   *int64
 	DockerVersion   *string
+
+	Hostname         string
+	OS               string
+	Architecture     string
+	CPUCores         int
+	MemoryTotalBytes int64
+	DiskTotalBytes   int64
+
+	RunningContainers int
+	ImageCount        int
+	VolumeCount       int
+	NetworkCount      int
+	AgentState        string
 }

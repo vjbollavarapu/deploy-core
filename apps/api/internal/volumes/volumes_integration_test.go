@@ -100,18 +100,19 @@ func TestVolumeLifecycleAndDeleteProtection(t *testing.T) {
 	}
 	var created struct {
 		Volume struct {
-			ID        string `json:"id"`
-			State     string `json:"state"`
-			Protected bool   `json:"protected"`
-			Labels    map[string]any `json:"labels"`
-			LastCommandID *string `json:"lastCommandId"`
+			ID            string         `json:"id"`
+			State         string         `json:"state"`
+			Protected     bool           `json:"protected"`
+			Labels        map[string]any `json:"labels"`
+			LastCommandID *string        `json:"lastCommandId"`
 		} `json:"volume"`
 	}
 	decode(t, create, &created)
 	if created.Volume.State != volumes.StateCreating {
 		t.Fatalf("state=%s", created.Volume.State)
 	}
-	if created.Volume.Labels["deploycore.managed"] != true {
+	// Labels are string-valued (Docker label contract); managed marker is "true".
+	if created.Volume.Labels["deploycore.managed"] != "true" {
 		t.Fatalf("labels=%v", created.Volume.Labels)
 	}
 	if created.Volume.LastCommandID == nil {
@@ -126,7 +127,7 @@ func TestVolumeLifecycleAndDeleteProtection(t *testing.T) {
 	get := doJSON(t, srv, http.MethodGet, "/api/v1/volumes/"+created.Volume.ID, nil, ownerTok)
 	var ready struct {
 		Volume struct {
-			State      string `json:"state"`
+			State      string  `json:"state"`
 			DockerName *string `json:"dockerName"`
 			UsageBytes *int64  `json:"usageBytes"`
 		} `json:"volume"`

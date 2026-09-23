@@ -10,12 +10,14 @@ import (
 
 	"github.com/deploycore/deploy-core/apps/api/internal/agentcmd"
 	"github.com/deploycore/deploy-core/apps/api/internal/deployments"
+	"github.com/deploycore/deploy-core/apps/api/internal/domains"
 	"github.com/deploycore/deploy-core/apps/api/internal/healthchecks"
 	"github.com/deploycore/deploy-core/apps/api/internal/jobs"
 	"github.com/deploycore/deploy-core/apps/api/internal/notifications"
 	"github.com/deploycore/deploy-core/apps/api/internal/replicas"
 	"github.com/deploycore/deploy-core/apps/api/internal/webhooks"
 	"github.com/deploycore/deploy-core/apps/api/pkg/apierror"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -238,7 +240,7 @@ func (o *Orchestrator) stepFetchingSource(ctx context.Context, d deployments.Dep
 	}
 	// Image sources skip remote fetch.
 	if cfg.SourceType != "image" {
-		if err := o.issueOrSimulate(ctx, d, agentcmd.OpBuildImage, map[string]any{
+		if err := o.issueOrSimulate(ctx, d, protocol.OpBuildImage, map[string]any{
 			"phase": "fetch_source", "deploymentId": d.ID.String(),
 		}); err != nil {
 			return o.fail(ctx, d, deployments.StatusFetchingSource, deployments.StatusSourceFailed, "SOURCE_FAILED", err.Error())
@@ -258,10 +260,10 @@ func (o *Orchestrator) stepBuilding(ctx context.Context, d deployments.Deploymen
 	if err != nil {
 		return o.fail(ctx, d, deployments.StatusBuilding, deployments.StatusBuildFailed, "CONFIG_ERROR", err.Error())
 	}
-	op := agentcmd.OpBuildImage
+	op := protocol.OpBuildImage
 	payload := map[string]any{"deploymentId": d.ID.String(), "phase": "build"}
 	if cfg.SourceType == "image" {
-		op = agentcmd.OpPullImage
+		op = protocol.OpPullImage
 		payload["phase"] = "pull"
 		if cfg.ImageReference != nil {
 			payload["imageReference"] = *cfg.ImageReference
@@ -274,7 +276,10 @@ func (o *Orchestrator) stepBuilding(ctx context.Context, d deployments.Deploymen
 		}
 		return o.fail(ctx, d, deployments.StatusBuilding, failTo, "BUILD_FAILED", err.Error())
 	}
-	digest := fmt.Sprintf("sha256:sim-%s", d.ID.String()[:8])
+	digest := strOr(cfg.ImageReference, "local:candidate")
+	if o.cfg.SimulateAgent {
+		digest = fmt.Sprintf("sha256:sim-%s", d.ID.String()[:8])
+	}
 	if d.TargetRevisionID != nil {
 		_ = o.updateRevisionImage(ctx, *d.TargetRevisionID, digest, strOr(cfg.ImageReference, "local:candidate"))
 	}
@@ -296,20 +301,46 @@ func (o *Orchestrator) stepCreatingContainer(ctx context.Context, d deployments.
 	if err != nil {
 		return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", err.Error())
 	}
+	traefik := o.buildTraefikPayload(ctx, d.ApplicationID, slug)
+	cfg, _ := o.loadAppConfig(ctx, d.ApplicationID)
 	for i := 0; i < desired; i++ {
 		name := replicas.ContainerName(slug, revNumber, i)
 		payload := map[string]any{
-			"deploymentId":  d.ID.String(),
-			"phase":         "create_container",
-			"replicaIndex":  i,
-			"containerName": name,
+			"deploymentId":    d.ID.String(),
+			"phase":           "create_container",
+			"replicaIndex":    i,
+			"containerName":   name,
 			"desiredReplicas": desired,
+			"applicationSlug": slug,
 		}
 		if isRollback(d) {
-			payload["phase"] = "rollback_reuse"
+			payload["phase"] = "rollback"
+			payload["trigger"] = "rollback"
 		}
 		if d.TargetRevisionID != nil {
 			payload["revisionId"] = d.TargetRevisionID.String()
+			payload["targetRevisionId"] = d.TargetRevisionID.String()
+		}
+		if traefik != nil {
+			payload["traefik"] = traefik
+		}
+		if cfg.InternalPort != nil && *cfg.InternalPort > 0 {
+			payload["internalPorts"] = []map[string]any{
+				{"containerPort": *cfg.InternalPort, "protocol": "tcp"},
+			}
+		}
+		// For rollback, identify current production containers for drain/stop.
+		if isRollback(d) {
+			if prev, err := o.getActiveRevision(ctx, d.ApplicationID); err == nil && prev != nil {
+				if oldList, err := o.replicas.ListByApplication(ctx, d.ApplicationID); err == nil {
+					for _, rep := range oldList {
+						if rep.RevisionID != nil && *rep.RevisionID == prev.ID && rep.ReplicaIndex == i {
+							payload["currentContainerName"] = rep.ContainerName
+							break
+						}
+					}
+				}
+			}
 		}
 		if _, err := o.replicas.UpsertSlot(ctx, replicas.UpsertInput{
 			OrganizationID: d.OrganizationID,
@@ -322,7 +353,7 @@ func (o *Orchestrator) stepCreatingContainer(ctx context.Context, d deployments.
 		}); err != nil {
 			return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", err.Error())
 		}
-		if err := o.issueOrSimulate(ctx, d, agentcmd.OpDeployRevision, payload); err != nil {
+		if err := o.issueOrSimulate(ctx, d, protocol.OpDeployRevision, payload); err != nil {
 			return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", err.Error())
 		}
 	}
@@ -350,7 +381,7 @@ func (o *Orchestrator) stepStarting(ctx context.Context, d deployments.Deploymen
 		if rep.ReplicaIndex >= desired {
 			continue
 		}
-		if err := o.issueOrSimulate(ctx, d, agentcmd.OpStartContainer, map[string]any{
+		if err := o.issueOrSimulate(ctx, d, protocol.OpStartContainer, map[string]any{
 			"deploymentId":  d.ID.String(),
 			"replicaIndex":  rep.ReplicaIndex,
 			"containerName": rep.ContainerName,
@@ -421,7 +452,7 @@ func (o *Orchestrator) stepHealthChecking(ctx context.Context, d deployments.Dep
 	if d.TargetRevisionID != nil {
 		payload["revisionId"] = d.TargetRevisionID.String()
 	}
-	if err := o.issueOrSimulate(ctx, d, agentcmd.OpRunHealthCheck, payload); err != nil {
+	if err := o.issueOrSimulate(ctx, d, protocol.OpRunHealthCheck, payload); err != nil {
 		_, _ = o.health.RecordProbe(ctx, healthchecks.ProbeInput{
 			OrganizationID: d.OrganizationID,
 			ApplicationID:  d.ApplicationID,
@@ -510,14 +541,31 @@ func (o *Orchestrator) stepActivating(ctx context.Context, d deployments.Deploym
 			"deploycore.replica.index":    fmt.Sprintf("%d", rep.ReplicaIndex),
 			"deploycore.replica.role":     "member",
 		}
-		_ = o.issueOrSimulate(ctx, d, agentcmd.OpDeployRevision, map[string]any{
+		// Merge control-plane desired routing labels for all app domains.
+		if domainRepo := domains.NewPostgresRepository(o.pool); domainRepo != nil {
+			if list, err := domainRepo.ListByApplication(ctx, d.ApplicationID); err == nil {
+				for _, dom := range list {
+					for k, v := range domains.BuildReplicaRoutingLabels(slug, dom, rep.ReplicaIndex) {
+						labels[k] = v
+					}
+				}
+			}
+		}
+		activatePayload := map[string]any{
 			"deploymentId":   d.ID.String(),
 			"phase":          "enable_routing",
 			"replicaIndex":   rep.ReplicaIndex,
 			"containerName":  rep.ContainerName,
 			"routingLabels":  labels,
 			"routingEnabled": true,
-		})
+			"proxyNetwork":   "deploycore-proxy",
+		}
+		if traefik := o.buildTraefikPayload(ctx, d.ApplicationID, slug); traefik != nil {
+			activatePayload["traefik"] = traefik
+		}
+		if err := o.issueOrSimulate(ctx, d, protocol.OpDeployRevision, activatePayload); err != nil {
+			return o.fail(ctx, d, deployments.StatusActivating, deployments.StatusRoutingFailed, "ROUTING_FAILED", err.Error())
+		}
 		_, _ = o.replicas.UpdateStatus(ctx, rep.ID, replicas.StatusRunning, &healthyTrue, &routingOn, nil, nil)
 	}
 
@@ -533,21 +581,32 @@ func (o *Orchestrator) stepActivating(ctx context.Context, d deployments.Deploym
 		// Drain/stop previous revision replicas (rolling retire).
 		for _, rep := range list {
 			if rep.RevisionID != nil && *rep.RevisionID == prevActive.ID {
-				_ = o.issueOrSimulate(ctx, d, agentcmd.OpStopContainer, map[string]any{
+				if err := o.issueOrSimulate(ctx, d, protocol.OpStopContainer, map[string]any{
 					"deploymentId":  d.ID.String(),
 					"revisionId":    prevActive.ID.String(),
 					"replicaIndex":  rep.ReplicaIndex,
 					"containerName": rep.ContainerName,
 					"reason":        "rolling_replace",
 					"drainRouting":  true,
-				})
+				}); err != nil {
+					o.log.Warn("old replica retirement command failed",
+						slog.String("error", err.Error()),
+						slog.String("containerName", rep.ContainerName),
+					)
+				}
 			}
 		}
-		_ = o.issueOrSimulate(ctx, d, agentcmd.OpStopContainer, map[string]any{
+		if err := o.issueOrSimulate(ctx, d, protocol.OpStopContainer, map[string]any{
 			"deploymentId": d.ID.String(),
 			"revisionId":   prevActive.ID.String(),
 			"reason":       "retire_previous",
-		})
+			"drainRouting": true,
+		}); err != nil {
+			o.log.Warn("previous revision retirement command failed",
+				slog.String("error", err.Error()),
+				slog.String("revisionId", prevActive.ID.String()),
+			)
+		}
 	}
 
 	meta := map[string]any{
@@ -706,8 +765,9 @@ func (o *Orchestrator) validateServer(ctx context.Context, d deployments.Deploym
 	if maintenance {
 		return errors.New("target server is in maintenance")
 	}
-	// ONLINE preferred; OFFLINE allowed when simulating (no agent yet).
-	if status != "ONLINE" && !o.cfg.SimulateAgent {
+	// ONLINE preferred; DEGRADED still means the agent is heartbeating (e.g. Docker unavailable).
+	// OFFLINE is allowed only when simulating (no agent yet).
+	if status != "ONLINE" && status != "DEGRADED" && !o.cfg.SimulateAgent {
 		return fmt.Errorf("target server status is %s", status)
 	}
 	return nil
@@ -927,32 +987,104 @@ func (o *Orchestrator) issueOrSimulate(ctx context.Context, d deployments.Deploy
 	if d.ServerID == nil {
 		return errors.New("no server")
 	}
-	if o.cfg.SimulateAgent || !o.serverOnline(ctx, *d.ServerID) {
+	if o.cfg.SimulateAgent {
 		o.log.Info("simulating agent command",
 			slog.String("operation", op),
 			slog.String("deploymentId", d.ID.String()),
 		)
 		return nil
 	}
+	if !o.agentReachable(ctx, *d.ServerID) {
+		return fmt.Errorf("target server agent not reachable")
+	}
+
+	payload["applicationId"] = d.ApplicationID.String()
+	payload["organizationId"] = d.OrganizationID.String()
+	payload["environmentId"] = d.EnvironmentID.String()
+
+	if d.TargetRevisionID != nil {
+		payload["revisionId"] = d.TargetRevisionID.String()
+		if _, ok := payload["image"]; !ok && (op == protocol.OpDeployRevision || op == protocol.OpStartContainer || op == protocol.OpRunHealthCheck) {
+			var digest, tag string
+			_ = o.pool.QueryRow(ctx, `
+				SELECT COALESCE(image_digest, ''), COALESCE(image_tag, '')
+				FROM revisions WHERE id = $1`, *d.TargetRevisionID).Scan(&digest, &tag)
+			image := digest
+			if image == "" {
+				image = tag
+			}
+			if image != "" {
+				payload["image"] = image
+			}
+		}
+	}
 	now := o.now().UTC()
-	_, err := o.commands.Create(ctx, agentcmd.Command{
+	cmd, err := o.commands.Create(ctx, agentcmd.Command{
 		OrganizationID: d.OrganizationID,
 		ServerID:       *d.ServerID,
 		Operation:      op,
-		SchemaVersion:  agentcmd.SchemaVersion,
+		SchemaVersion:  protocol.SchemaVersion,
 		Payload:        payload,
 		IssuedAt:       now,
 		ExpiresAt:      now.Add(10 * time.Minute),
 		RequestID:      d.RequestID,
 		CorrelationID:  strPtr(d.ID.String()),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return o.waitForCommand(ctx, cmd.ID)
 }
 
-func (o *Orchestrator) serverOnline(ctx context.Context, serverID uuid.UUID) bool {
+// agentReachable reports whether an authenticated agent is heartbeating for the server.
+// DEGRADED is reachable (agent up; host may lack Docker or be resource-stressed).
+func (o *Orchestrator) agentReachable(ctx context.Context, serverID uuid.UUID) bool {
 	var status string
 	err := o.pool.QueryRow(ctx, `SELECT status FROM servers WHERE id = $1 AND deleted_at IS NULL`, serverID).Scan(&status)
-	return err == nil && status == "ONLINE"
+	return err == nil && (status == "ONLINE" || status == "DEGRADED")
+}
+
+// buildTraefikPayload loads application domains and returns the Agent-compatible traefik object.
+func (o *Orchestrator) buildTraefikPayload(ctx context.Context, appID uuid.UUID, appSlug string) map[string]any {
+	repo := domains.NewPostgresRepository(o.pool)
+	list, err := repo.ListByApplication(ctx, appID)
+	if err != nil || len(list) == 0 {
+		return nil
+	}
+	return domains.BuildAgentTraefikConfig(appSlug, list)
+}
+
+func (o *Orchestrator) waitForCommand(ctx context.Context, commandID uuid.UUID) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := o.now().UTC().Add(10 * time.Minute)
+	for {
+		cmd, err := o.commands.Get(ctx, commandID)
+		if err != nil {
+			return err
+		}
+		switch cmd.Status {
+		case protocol.StatusCompleted:
+			return nil
+		case protocol.StatusFailed, protocol.StatusExpired, protocol.StatusCancelled:
+			msg := "agent command " + cmd.Status
+			if cmd.ErrorMessage != nil && *cmd.ErrorMessage != "" {
+				msg = *cmd.ErrorMessage
+			}
+			if cmd.ErrorCode != nil && *cmd.ErrorCode != "" {
+				return fmt.Errorf("%s: %s", *cmd.ErrorCode, msg)
+			}
+			return errors.New(msg)
+		}
+		if o.now().UTC().After(deadline) {
+			return fmt.Errorf("agent command timed out waiting for completion")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (o *Orchestrator) replicaDeployContext(ctx context.Context, d deployments.Deployment) (desired int, slug string, revNumber int, err error) {

@@ -24,7 +24,8 @@ func NewHandler(svc *Service, authHandler *auth.Handler) *Handler {
 
 func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.Handle("POST /applications/{applicationId}/domains", h.auth.RequireAuth(http.HandlerFunc(h.Create)))
-	mux.Handle("GET /applications/{applicationId}/domains", h.auth.RequireAuth(http.HandlerFunc(h.List)))
+	mux.Handle("GET /applications/{applicationId}/domains", h.auth.RequireAuth(http.HandlerFunc(h.ListByApplication)))
+	mux.Handle("GET /domains", h.auth.RequireAuth(http.HandlerFunc(h.List)))
 	mux.Handle("PATCH /domains/{domainId}", h.auth.RequireAuth(http.HandlerFunc(h.Update)))
 	mux.Handle("DELETE /domains/{domainId}", h.auth.RequireAuth(http.HandlerFunc(h.Delete)))
 }
@@ -46,19 +47,19 @@ type updateRequest struct {
 }
 
 type domainResponse struct {
-	ID             string         `json:"id"`
-	OrganizationID string         `json:"organizationId"`
-	ApplicationID  string         `json:"applicationId"`
-	EnvironmentID  string         `json:"environmentId"`
-	Hostname       string         `json:"hostname"`
-	InternalPort   int            `json:"internalPort"`
-	IsPrimary      bool           `json:"isPrimary"`
-	ForceHTTPS     bool           `json:"forceHttps"`
-	DNSStatus      string         `json:"dnsStatus"`
-	TLSStatus      string         `json:"tlsStatus"`
-	Routing        RoutingConfig  `json:"routing"`
-	CreatedAt      string         `json:"createdAt"`
-	UpdatedAt      string         `json:"updatedAt"`
+	ID             string        `json:"id"`
+	OrganizationID string        `json:"organizationId"`
+	ApplicationID  string        `json:"applicationId"`
+	EnvironmentID  string        `json:"environmentId"`
+	Hostname       string        `json:"hostname"`
+	InternalPort   int           `json:"internalPort"`
+	IsPrimary      bool          `json:"isPrimary"`
+	ForceHTTPS     bool          `json:"forceHttps"`
+	DNSStatus      string        `json:"dnsStatus"`
+	TLSStatus      string        `json:"tlsStatus"`
+	Routing        RoutingConfig `json:"routing"`
+	CreatedAt      string        `json:"createdAt"`
+	UpdatedAt      string        `json:"updatedAt"`
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +93,29 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		writeErr(w, r, apierror.Unauthorized("not authenticated"))
+		return
+	}
+	orgID, err := uuid.Parse(strings.TrimSpace(r.URL.Query().Get("organizationId")))
+	if err != nil {
+		writeErr(w, r, apierror.Validation("organizationId is required", nil))
+		return
+	}
+	items, err := h.svc.List(r.Context(), user.ID, orgID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	out := make([]domainResponse, 0, len(items))
+	for _, d := range items {
+		out = append(out, toResponse(d))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"domains": out})
+}
+
+func (h *Handler) ListByApplication(w http.ResponseWriter, r *http.Request) {
 	user, ok := auth.UserFromContext(r.Context())
 	if !ok {
 		writeErr(w, r, apierror.Unauthorized("not authenticated"))

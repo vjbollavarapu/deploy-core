@@ -8,13 +8,13 @@ import (
 )
 
 const (
-	TypeDeploymentExecution  = "DEPLOYMENT_EXECUTION"
-	TypeBackup               = "BACKUP"
-	TypeRestore              = "RESTORE"
-	TypeCertificateOperation = "CERTIFICATE_OPERATION"
-	TypeNotificationDelivery = "NOTIFICATION_DELIVERY"
-	TypeWebhookDelivery      = "WEBHOOK_DELIVERY"
-	TypeReplicasReconcile    = "REPLICAS_RECONCILE"
+	TypeDeploymentExecution   = "DEPLOYMENT_EXECUTION"
+	TypeBackup                = "BACKUP"
+	TypeRestore               = "RESTORE"
+	TypeCertificateOperation  = "CERTIFICATE_OPERATION"
+	TypeNotificationDelivery  = "NOTIFICATION_DELIVERY"
+	TypeWebhookDelivery       = "WEBHOOK_DELIVERY"
+	TypeReplicasReconcile     = "REPLICAS_RECONCILE"
 	TypeDesiredStateReconcile = "DESIRED_STATE_RECONCILE"
 )
 

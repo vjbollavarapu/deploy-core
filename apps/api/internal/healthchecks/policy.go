@@ -42,19 +42,19 @@ type Policy struct {
 }
 
 type Status struct {
-	ApplicationID         uuid.UUID
-	OrganizationID        uuid.UUID
-	RevisionID            *uuid.UUID
-	DeploymentID          *uuid.UUID
-	State                 string
-	ConsecutiveSuccesses  int
-	ConsecutiveFailures   int
-	LastProbeAt           *time.Time
-	LastSuccessAt         *time.Time
-	LastFailureAt         *time.Time
-	LastMessage           string
-	ProbeType             string
-	UpdatedAt             time.Time
+	ApplicationID        uuid.UUID
+	OrganizationID       uuid.UUID
+	RevisionID           *uuid.UUID
+	DeploymentID         *uuid.UUID
+	State                string
+	ConsecutiveSuccesses int
+	ConsecutiveFailures  int
+	LastProbeAt          *time.Time
+	LastSuccessAt        *time.Time
+	LastFailureAt        *time.Time
+	LastMessage          string
+	ProbeType            string
+	UpdatedAt            time.Time
 }
 
 type Sample struct {

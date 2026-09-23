@@ -6,14 +6,16 @@ import { ChartContainer, type ChartConfig } from '@/components/ui/chart'
 import { Metric } from '@/components/platform/metric'
 import { cn } from '@/lib/utils'
 import { getResourceUtilisation } from '@/lib/dashboard'
+import { TONE_CLASSES } from '@/lib/status'
 
 const chartConfig = {
   value: { label: 'Utilisation', color: 'var(--color-primary)' },
 } satisfies ChartConfig
 
+
 function toneClass(value: number) {
-  if (value >= 90) return 'text-critical'
-  if (value >= 75) return 'text-warning'
+  if (value >= 90) return TONE_CLASSES.critical.text
+  if (value >= 75) return TONE_CLASSES.warning.text
   return 'text-foreground'
 }
 

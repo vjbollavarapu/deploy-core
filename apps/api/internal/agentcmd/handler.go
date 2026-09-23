@@ -12,6 +12,7 @@ import (
 	"github.com/deploycore/deploy-core/apps/api/pkg/apierror"
 	"github.com/deploycore/deploy-core/apps/api/pkg/pagination"
 	"github.com/deploycore/deploy-core/apps/api/pkg/requestid"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 )
 
@@ -42,35 +43,8 @@ type issueRequest struct {
 	TTLSeconds    *int           `json:"ttlSeconds"`
 }
 
-type statusRequest struct {
-	Status       string         `json:"status"`
-	Result       map[string]any `json:"result"`
-	ErrorCode    *string        `json:"errorCode"`
-	ErrorMessage *string        `json:"errorMessage"`
-}
-
-type commandResponse struct {
-	ID             string         `json:"id"`
-	OrganizationID string         `json:"organizationId"`
-	ServerID       string         `json:"serverId"`
-	Operation      string         `json:"operation"`
-	SchemaVersion  int            `json:"schemaVersion"`
-	Payload        map[string]any `json:"payload"`
-	Status         string         `json:"status"`
-	IssuedAt       string         `json:"issuedAt"`
-	ExpiresAt      string         `json:"expiresAt"`
-	RequestID      *string        `json:"requestId,omitempty"`
-	CorrelationID  *string        `json:"correlationId,omitempty"`
-	IssuedBy       *string        `json:"issuedBy,omitempty"`
-	Result         map[string]any `json:"result,omitempty"`
-	ErrorCode      *string        `json:"errorCode,omitempty"`
-	ErrorMessage   *string        `json:"errorMessage,omitempty"`
-	AcceptedAt     *string        `json:"acceptedAt,omitempty"`
-	StartedAt      *string        `json:"startedAt,omitempty"`
-	FinishedAt     *string        `json:"finishedAt,omitempty"`
-	CreatedAt      string         `json:"createdAt"`
-	UpdatedAt      string         `json:"updatedAt"`
-}
+// statusRequest replaced by protocol.CommandStatusRequest
+// commandResponse replaced by protocol.CommandEnvelope
 
 func (h *Handler) Issue(w http.ResponseWriter, r *http.Request) {
 	user, ok := auth.UserFromContext(r.Context())
@@ -123,11 +97,11 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	out := make([]commandResponse, 0, len(items))
+	out := make([]protocol.CommandEnvelope, 0, len(items))
 	for _, c := range items {
 		out = append(out, toResponse(c))
 	}
-	writeJSON(w, http.StatusOK, pagination.Page[commandResponse]{
+	writeJSON(w, http.StatusOK, pagination.Page[protocol.CommandEnvelope]{
 		Items: out, Limit: page.Limit, Offset: page.Offset, TotalCount: &total,
 	})
 }
@@ -181,12 +155,12 @@ func (h *Handler) Poll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	out := make([]commandResponse, 0, len(items))
+	out := make([]protocol.CommandEnvelope, 0, len(items))
 	for _, c := range items {
 		out = append(out, toResponse(c))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"schemaVersion": SchemaVersion,
+		"schemaVersion": protocol.SchemaVersion,
 		"commands":      out,
 	})
 }
@@ -202,7 +176,7 @@ func (h *Handler) ReportStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, apierror.Validation("invalid command id", nil))
 		return
 	}
-	var req statusRequest
+	var req protocol.CommandStatusRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, r, err)
 		return
@@ -215,8 +189,8 @@ func (h *Handler) ReportStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"command": toResponse(cmd)})
 }
 
-func toResponse(c Command) commandResponse {
-	out := commandResponse{
+func toResponse(c Command) protocol.CommandEnvelope {
+	out := protocol.CommandEnvelope{
 		ID:             c.ID.String(),
 		OrganizationID: c.OrganizationID.String(),
 		ServerID:       c.ServerID.String(),

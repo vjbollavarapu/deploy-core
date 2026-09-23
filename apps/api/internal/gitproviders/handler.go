@@ -74,20 +74,20 @@ type repoUpsertRequest struct {
 }
 
 type connectionResponse struct {
-	ID                 string         `json:"id"`
-	OrganizationID     string         `json:"organizationId"`
-	Provider           string         `json:"provider"`
-	AccountLogin       string         `json:"accountLogin"`
-	DisplayName        string         `json:"displayName"`
-	Status             string         `json:"status"`
-	LastSyncAt         *string        `json:"lastSyncAt,omitempty"`
-	HasWebhookSecret   bool           `json:"hasWebhookSecret"`
-	WebhookSecret      *string        `json:"webhookSecret,omitempty"`
-	WebhookURLHint     string         `json:"webhookUrlHint,omitempty"`
-	Metadata           map[string]any `json:"metadata"`
-	CreatedBy          *string        `json:"createdBy,omitempty"`
-	CreatedAt          string         `json:"createdAt"`
-	UpdatedAt          string         `json:"updatedAt"`
+	ID               string         `json:"id"`
+	OrganizationID   string         `json:"organizationId"`
+	Provider         string         `json:"provider"`
+	AccountLogin     string         `json:"accountLogin"`
+	DisplayName      string         `json:"displayName"`
+	Status           string         `json:"status"`
+	LastSyncAt       *string        `json:"lastSyncAt,omitempty"`
+	HasWebhookSecret bool           `json:"hasWebhookSecret"`
+	WebhookSecret    *string        `json:"webhookSecret,omitempty"`
+	WebhookURLHint   string         `json:"webhookUrlHint,omitempty"`
+	Metadata         map[string]any `json:"metadata"`
+	CreatedBy        *string        `json:"createdBy,omitempty"`
+	CreatedAt        string         `json:"createdAt"`
+	UpdatedAt        string         `json:"updatedAt"`
 }
 
 type repositoryResponse struct {

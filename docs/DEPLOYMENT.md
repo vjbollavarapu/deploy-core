@@ -1,62 +1,50 @@
-# DeployCore Deployment & Infrastructure Reality
+# DeployCore Deployment & Infrastructure Notes
 
-This document describes the actual state of containerization, continuous integration, and production deployment configuration in the repository.
+> **Authoritative production operator guide:**  
+> **[production-runbook.md](./production-runbook.md)**  
+> **OCI validation checklist:**  
+> **[oci-live-validation-checklist.md](./oci-live-validation-checklist.md)**
 
----
-
-## 1. Containerization State
-
-### Application Dockerfiles
-- **`apps/api`**: **No `Dockerfile` exists**. The Go API is compiled and run directly on the host using `go run ./cmd/api` or `go build ./cmd/api`.
-- **`apps/frontend`**: **No `Dockerfile` exists**. The Next.js application is built and executed using `pnpm run build` and `next start`.
-- **Root**: **No root `Dockerfile` exists**.
-
-### Compose Configuration
-- **`docker-compose.yml`**: **No compose file exists** in the repository root or sub-applications.
-- **Local Overrides**: `.gitignore` explicitly ignores `docker-compose.override.yml` and `compose.override.yml`, indicating local developer overrides are anticipated but no baseline compose configuration is checked into source control.
+This file is a short index of what exists in the repository for packaging and local bootstrap. Prefer the production runbook for end-to-end procedures.
 
 ---
 
-## 2. CI/CD Pipelines
+## What exists today
 
-- **GitHub Actions**: **No `.github/` directory exists** in the repository.
-- **Alternative CI Providers**: No `.gitlab-ci.yml`, `Jenkinsfile`, or cloud build configs are present.
-- **Automated Validation**: Automated testing, linting, typechecking, and security scans are not currently executed in a remote CI pipeline. All verifications must be run manually prior to committing.
-
----
-
-## 3. Runtime & Execution Architecture
-
-DeployCore manages external infrastructure through an agent-driven model:
-
-```text
-Control Plane (apps/api)
-       │
-       │ HTTP / WebSockets / Agent Commands
-       ▼
-Server Agent (apps/agent — planned)
-       │
-       │ Docker Engine API
-       ▼
-Host Docker Containers & Traefik Routing
-```
-
-### Current Development Runtime
-Because `apps/agent` is not yet implemented, the control plane includes an agent simulator:
-- **`ORCHESTRATOR_SIMULATE_AGENT=true`**:
-  - When enabled (default in non-production environments), the deployment orchestrator executes deployment state machine transitions locally without issuing commands to a physical Docker host.
-  - Allows full end-to-end testing of deployment workflows, rollbacks, database resource records, and volume management.
-- **Production Guard**:
-  - If `APP_ENV=production`, `ORCHESTRATOR_SIMULATE_AGENT` automatically defaults to `false`. Without an active server agent reporting for the target server, deployments and provisioning commands will queue waiting for agent execution.
+| Asset | Location | Notes |
+|---|---|---|
+| Agent installer | `deployments/install/install-agent.sh` | Ubuntu 22.04/24.04; checksum; Docker optional install; Traefik + `deploycore-proxy` |
+| systemd unit | `deployments/install/deploycore-agent.service` | `User=deploycore`, env files, `Requires=docker.service` |
+| Installer static checks | `deployments/install/validate-install-static.sh` | Documentation/CI helper |
+| Local Postgres compose | `docker-compose.yml` | **Postgres only** (`postgres:15-alpine`) for lab/bootstrap — not a full CP stack |
+| API | `apps/api` | No Dockerfile; run `go build` / `go run ./cmd/api`; embedded migrations on startup |
+| Frontend | `apps/frontend` | No Dockerfile; `pnpm run build` / `pnpm start`; demo/mock opt-in only |
+| Agent | `apps/agent` | Execution plane; systemd on managed servers |
 
 ---
 
-## 4. Production Readiness Gaps
+## What does **not** exist (v1)
 
-To deploy DeployCore into staging or production, the following infrastructure assets must be created:
-1. **API Dockerfile**: Multi-stage Go build resulting in a minimal scratch/distroless or alpine container running the compiled binary.
-2. **Frontend Dockerfile**: Multi-stage Next.js standalone build (`output: 'standalone'`).
-3. **Local Developer Compose Stack**: A `docker-compose.yml` defining PostgreSQL 16 with a healthcheck to bootstrap local developer onboarding.
-4. **CI Workflow**: A GitHub Actions workflow running:
-   - Go unit tests and `go vet`.
-   - Frontend `pnpm run typecheck` and `pnpm run lint`.
+- Packaged Control Plane production installer / Helm / full compose stack for API+frontend  
+- Public GA release artifact pipeline for Agent binaries + SHA256SUMS (**R20** — use `--binary` for OCI)  
+- Automatic Agent update E2E (**R18** deferred)  
+- Uninstall tooling (**R19** deferred)  
+- CI workflows under `.github/` (not present)
+
+---
+
+## Production simulation / mock (must stay off)
+
+| Setting | Production value |
+|---|---|
+| `ORCHESTRATOR_SIMULATE_AGENT` | `false` (API default is already `false`) |
+| `NEXT_PUBLIC_DEMO_MODE` | unset / not `true` |
+| `NEXT_PUBLIC_ENABLE_MOCK_FALLBACK` | unset / not `true` |
+
+---
+
+## Related
+
+- Architecture overview: [ARCHITECTURE.md](./ARCHITECTURE.md)  
+- Capacity / placement: [apps/api/docs/CAPACITY.md](../apps/api/docs/CAPACITY.md)  
+- API README: [apps/api/README.md](../apps/api/README.md)

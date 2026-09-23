@@ -32,6 +32,17 @@ func (a *PostgresAccessor) GetApplicationOrg(ctx context.Context, appID uuid.UUI
 	return orgID, err
 }
 
+// GetApplicationPlacement returns org and assigned server for Agent scoping.
+func (a *PostgresAccessor) GetApplicationPlacement(ctx context.Context, appID uuid.UUID) (orgID uuid.UUID, serverID *uuid.UUID, err error) {
+	err = a.pool.QueryRow(ctx, `
+		SELECT organization_id, target_server_id FROM applications
+		WHERE id = $1 AND deleted_at IS NULL`, appID).Scan(&orgID, &serverID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, nil, ErrNotFound
+	}
+	return orgID, serverID, err
+}
+
 type deploymentRef struct {
 	ID             uuid.UUID
 	OrganizationID uuid.UUID

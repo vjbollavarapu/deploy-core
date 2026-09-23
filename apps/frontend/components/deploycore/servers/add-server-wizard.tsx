@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useState } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import {
   Check,
   ChevronLeft,
@@ -25,6 +25,9 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { CodeBlock } from '@/components/platform/code-block'
+import { apiClient, ApiError, type Server as WireServer } from '@/lib/api'
+import { useOrganization } from '@/lib/auth-context'
+import { isDemoModeEnabled } from '@/lib/mock-isolation'
 import { cn } from '@/lib/utils'
 import {
   buildRegistrationCommand,
@@ -38,11 +41,33 @@ import {
   type AddServerValues,
 } from '@/lib/validations/server'
 
-export function AddServerWizard() {
+interface AddServerWizardProps {
+  onSuccess?: () => void
+}
+
+type CreateServerResponse = { server?: WireServer }
+type RegistrationTokenResponse = {
+  registrationToken?: {
+    serverId?: string
+    agentId?: string
+    token?: string
+    expiresAt?: string
+  }
+}
+type GetServerResponse = { server?: WireServer }
+
+export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
+  const { activeOrg } = useOrganization()
+  const demo = isDemoModeEnabled()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState(0)
   const [verified, setVerified] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [createdServerId, setCreatedServerId] = useState<string | null>(null)
+  const [registrationToken, setRegistrationToken] = useState<string | null>(null)
+  const [verifyStatus, setVerifyStatus] = useState<string | null>(null)
+  const [verifyDetail, setVerifyDetail] = useState<string | null>(null)
 
   const form = useForm<AddServerValues>({
     defaultValues: DEFAULT_ADD_SERVER_VALUES,
@@ -57,23 +82,31 @@ export function AddServerWizard() {
     setValue,
     setError,
     clearErrors,
-    watch,
+    control,
     formState: { errors },
   } = form
 
-  const values = watch()
-  const registrationCommand = useMemo(
-    () => buildRegistrationCommand(REGISTRATION_TOKEN_PLACEHOLDER),
-    [],
-  )
+  const values = useWatch({ control })
+  const tokenForCommand = registrationToken || (demo ? REGISTRATION_TOKEN_PLACEHOLDER : '…')
+  const serverIdForCommand = createdServerId || (demo ? '<SERVER_UUID>' : '…')
+  const registrationCommand = buildRegistrationCommand(tokenForCommand, serverIdForCommand)
+
+  function resetWizardState() {
+    setStep(0)
+    setVerified(false)
+    setChecking(false)
+    setCreating(false)
+    setCreatedServerId(null)
+    setRegistrationToken(null)
+    setVerifyStatus(null)
+    setVerifyDetail(null)
+    reset(DEFAULT_ADD_SERVER_VALUES)
+  }
 
   function handleOpenChange(next: boolean) {
     setOpen(next)
     if (!next) {
-      setStep(0)
-      setVerified(false)
-      setChecking(false)
-      reset(DEFAULT_ADD_SERVER_VALUES)
+      resetWizardState()
     }
   }
 
@@ -109,22 +142,137 @@ export function AddServerWizard() {
     return true
   }
 
-  function goNext() {
+  async function ensureServerRegistered(): Promise<boolean> {
+    if (createdServerId && registrationToken) return true
+
+    if (demo) {
+      setCreatedServerId('demo-server')
+      setRegistrationToken(REGISTRATION_TOKEN_PLACEHOLDER)
+      return true
+    }
+
+    if (!activeOrg?.id) {
+      toast.error('Select an organization before registering a server.')
+      return false
+    }
+
+    const vals = getValues()
+    setCreating(true)
+    try {
+      const created = await apiClient.post<CreateServerResponse>('/servers', {
+        organizationId: activeOrg.id,
+        name: vals.name,
+        hostname: vals.name,
+        provider: vals.provider,
+        region: vals.region,
+        ...(vals.publicIp ? { publicIp: vals.publicIp } : {}),
+        labels: {
+          ...(vals.labels ? { labels: vals.labels } : {}),
+        },
+      })
+      const serverId = created.server?.id
+      if (!serverId) {
+        toast.error('Control Plane did not return a server id.')
+        return false
+      }
+
+      const tok = await apiClient.post<RegistrationTokenResponse>(
+        `/servers/${serverId}/registration-token`,
+      )
+      const token = tok.registrationToken?.token
+      if (!token) {
+        toast.error('Control Plane did not return a registration token.')
+        return false
+      }
+
+      setCreatedServerId(serverId)
+      setRegistrationToken(token)
+      return true
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to register server')
+      return false
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function goNext() {
     if (!validateCurrentStep()) return
-    setStep((s) => Math.min(SERVER_WIZARD_STEPS.length - 1, s + 1))
+    const nextIndex = Math.min(SERVER_WIZARD_STEPS.length - 1, step + 1)
+    const nextStep = SERVER_WIZARD_STEPS[nextIndex]
+    if (nextStep.id === 'registration') {
+      const ok = await ensureServerRegistered()
+      if (!ok) return
+    }
+    setStep(nextIndex)
   }
 
   async function runVerification() {
     setChecking(true)
-    await new Promise((resolve) => setTimeout(resolve, 900))
-    setChecking(false)
-    setVerified(true)
-    toast.success('Agent heartbeat received')
+    setVerifyDetail(null)
+    try {
+      if (demo) {
+        setVerified(true)
+        setVerifyStatus('DEMO')
+        setVerifyDetail('Demo mode does not query Control Plane heartbeats.')
+        toast.message('Demo mode: heartbeat verification skipped')
+        return
+      }
+
+      if (!createdServerId) {
+        toast.error('Create the server before verifying the agent heartbeat.')
+        setVerified(false)
+        return
+      }
+
+      const res = await apiClient.get<GetServerResponse>(`/servers/${createdServerId}`)
+      const server = res.server
+      if (!server) {
+        setVerified(false)
+        setVerifyStatus(null)
+        toast.error('Server not found in Control Plane.')
+        return
+      }
+
+      const status = (server.status || 'OFFLINE').toUpperCase()
+      const heartbeatAt = server.lastHeartbeatAt
+      setVerifyStatus(status)
+
+      const hasHeartbeat = Boolean(heartbeatAt)
+      const agentPresent = status === 'ONLINE' || status === 'DEGRADED'
+
+      if (hasHeartbeat && agentPresent) {
+        setVerified(true)
+        setVerifyDetail(`lastHeartbeatAt=${heartbeatAt}`)
+        toast.success(`Agent heartbeat received (${status})`)
+        return
+      }
+
+      setVerified(false)
+      if (!hasHeartbeat) {
+        setVerifyDetail(`Status ${status}. No lastHeartbeatAt yet — install and start the agent, then check again.`)
+        toast.message(`Agent has not heartbeated yet (status: ${status})`)
+      } else {
+        setVerifyDetail(`lastHeartbeatAt present but status is ${status}`)
+        toast.message(`Server status is ${status}; waiting for ONLINE or DEGRADED`)
+      }
+    } catch (err) {
+      setVerified(false)
+      toast.error(err instanceof ApiError ? err.message : 'Failed to check server heartbeat')
+    } finally {
+      setChecking(false)
+    }
   }
 
   function finish() {
-    toast.success(`${getValues('name')} registered`)
+    const vals = getValues()
+    if (!demo && !createdServerId) {
+      toast.error('Server was not registered with the Control Plane.')
+      return
+    }
+    toast.success(`${vals.name} registered`)
     handleOpenChange(false)
+    onSuccess?.()
   }
 
   const isLast = step === SERVER_WIZARD_STEPS.length - 1
@@ -258,16 +406,22 @@ export function AddServerWizard() {
             <div className="flex flex-col gap-3">
               <p className="text-sm text-muted-foreground">
                 A secure temporary registration token was issued for{' '}
-                <span className="font-medium text-foreground">{values.name || 'this server'}</span>.
-                It expires in 60 minutes and can only be used once.
+                <span className="font-medium text-foreground">{values.name || 'this server'}</span>
+                {createdServerId ? (
+                  <>
+                    {' '}
+                    (<span className="font-mono text-xs">{createdServerId}</span>)
+                  </>
+                ) : null}
+                . It expires shortly and can only be used once.
               </p>
               <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Shield className="size-3.5" />
                   Temporary token
                 </div>
-                <p className="mt-1 font-mono text-sm text-foreground">
-                  {REGISTRATION_TOKEN_PLACEHOLDER}
+                <p className="mt-1 font-mono text-sm text-foreground break-all">
+                  {registrationToken || (demo ? REGISTRATION_TOKEN_PLACEHOLDER : 'Issuing…')}
                 </p>
               </div>
               <CodeBlock code={registrationCommand} label="Registration command" />
@@ -297,27 +451,43 @@ export function AddServerWizard() {
             <div className="flex flex-col gap-3">
               <p className="text-sm text-muted-foreground">
                 Waiting for the first heartbeat from{' '}
-                <span className="font-medium text-foreground">{values.name}</span>.
+                <span className="font-medium text-foreground">{values.name}</span>
+                {createdServerId ? (
+                  <>
+                    {' '}
+                    (<span className="font-mono text-xs">{createdServerId}</span>)
+                  </>
+                ) : null}
+                .
               </p>
               <div
                 className={cn(
-                  'flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm',
+                  'flex flex-col gap-1 rounded-lg border px-3 py-2.5 text-sm',
                   verified
                     ? 'border-success/30 bg-success/10 text-success'
                     : 'border-border bg-secondary/40 text-muted-foreground',
                 )}
               >
-                <span className="relative flex size-2">
-                  {!verified ? (
-                    <>
-                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-warning/60" />
-                      <span className="relative inline-flex size-2 rounded-full bg-warning" />
-                    </>
-                  ) : (
-                    <span className="relative inline-flex size-2 rounded-full bg-success" />
-                  )}
-                </span>
-                {verified ? 'Agent connected · heartbeat OK' : 'Waiting for agent heartbeat…'}
+                <div className="flex items-center gap-2">
+                  <span className="relative flex size-2">
+                    {!verified ? (
+                      <>
+                        <span className="absolute inline-flex size-full animate-ping rounded-full bg-warning/60" />
+                        <span className="relative inline-flex size-2 rounded-full bg-warning" />
+                      </>
+                    ) : (
+                      <span className="relative inline-flex size-2 rounded-full bg-success" />
+                    )}
+                  </span>
+                  {verified
+                    ? `Agent connected · heartbeat OK${verifyStatus ? ` (${verifyStatus})` : ''}`
+                    : verifyStatus
+                      ? `Waiting · Control Plane status ${verifyStatus}`
+                      : 'Waiting for agent heartbeat…'}
+                </div>
+                {verifyDetail ? (
+                  <p className="pl-4 text-xs opacity-80">{verifyDetail}</p>
+                ) : null}
               </div>
               <Button
                 type="button"
@@ -369,8 +539,8 @@ export function AddServerWizard() {
               Done
             </Button>
           ) : (
-            <Button type="button" size="sm" onClick={goNext}>
-              Continue
+            <Button type="button" size="sm" disabled={creating} onClick={() => void goNext()}>
+              {creating ? 'Registering…' : 'Continue'}
               <ChevronRight data-icon="inline-end" />
             </Button>
           )}

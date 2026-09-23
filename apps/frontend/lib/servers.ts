@@ -1,11 +1,21 @@
 import {
-  applications,
-  containerImages,
-  containers,
-  networks,
-  volumes,
+  applications as rawApplications,
+  containerImages as rawContainerImages,
+  containers as rawContainers,
+  networks as rawNetworks,
+  servers as rawMockServers,
+  volumes as rawVolumes,
 } from '@/lib/mock-data'
+import { getDemoFixtures, allowSyntheticFallback } from '@/lib/mock-isolation'
+
+const applications = getDemoFixtures(rawApplications)
+const containerImages = getDemoFixtures(rawContainerImages)
+const containers = getDemoFixtures(rawContainers)
+const networks = getDemoFixtures(rawNetworks)
+const mockServers = getDemoFixtures(rawMockServers)
+const volumes = getDemoFixtures(rawVolumes)
 import { getServerLogLines } from '@/lib/observability'
+import type { Server as WireServer } from '@/lib/api'
 import type {
   Application,
   Container,
@@ -13,6 +23,7 @@ import type {
   DockerNetwork,
   LogLine,
   Server,
+  Status,
   Volume,
 } from '@/lib/types'
 
@@ -24,6 +35,14 @@ export const SERVER_PROVIDERS = [
   'GCP',
   'Azure',
   'Self-hosted',
+] as const
+
+export const SERVER_STATUS_FILTERS = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'running', label: 'Running' },
+  { value: 'degraded', label: 'Degraded' },
+  { value: 'maintenance', label: 'Maintenance' },
+  { value: 'offline', label: 'Offline' },
 ] as const
 
 export const SERVER_SECTIONS = [
@@ -44,11 +63,98 @@ export type ServerSectionId = (typeof SERVER_SECTIONS)[number]['id']
 /** Deterministic placeholder registration token for UI demos. */
 export const REGISTRATION_TOKEN_PLACEHOLDER = 'dc_reg_tmp_8f3a2c1e9b7d4a60'
 
-export function findServer(serverId: string, servers: Server[]): Server | undefined {
-  return servers.find((server) => server.id === serverId)
+export function findServer(serverId: string, servers: Server[] = mockServers): Server | undefined {
+  const found = servers.find(
+    (server) => server.id === serverId || server.name.toLowerCase() === serverId.toLowerCase(),
+  )
+  if (found) return found
+  if (allowSyntheticFallback() && serverId && serverId !== 'undefined') {
+    return {
+      id: serverId,
+      name: serverId.startsWith('srv-') ? serverId : `srv-${serverId.slice(0, 8)}`,
+      provider: 'Hetzner',
+      region: 'eu-central-1',
+      ip: '192.0.2.10',
+      privateIp: '10.0.0.10',
+      cpu: 18,
+      cpuCores: 4,
+      memory: 34,
+      memoryTotalGb: 16,
+      disk: 42,
+      diskTotalGb: 160,
+      containers: 2,
+      agentVersion: 'v1.4.2',
+      status: 'running',
+      lastHeartbeat: '10s ago',
+      os: 'Ubuntu 24.04 LTS',
+      arch: 'x86_64',
+      dockerVersion: '27.1.1',
+      uptime: '14d 6h',
+      load: [0.42, 0.38, 0.35],
+    }
+  }
+  return undefined
 }
 
-export function findServerByName(name: string, servers: Server[]): Server | undefined {
+export function wireServerToViewModel(
+  wire: WireServer,
+  fallback?: Partial<Server>,
+): Server {
+  const isMaint = Boolean(wire.maintenanceMode || wire.status === 'MAINTENANCE')
+  let mappedStatus: Status = 'running'
+  if (isMaint) {
+    mappedStatus = 'maintenance'
+  } else if (wire.status === 'DEGRADED') {
+    mappedStatus = 'degraded'
+  } else if (wire.status === 'OFFLINE' || wire.status === 'DISABLED') {
+    mappedStatus = 'offline'
+  }
+
+  let formattedHeartbeat = 'Just now'
+  if (wire.lastHeartbeatAt) {
+    try {
+      const diffMs = Date.now() - new Date(wire.lastHeartbeatAt).getTime()
+      if (diffMs < 60000) {
+        formattedHeartbeat = `${Math.max(1, Math.round(diffMs / 1000))}s ago`
+      } else if (diffMs < 3600000) {
+        formattedHeartbeat = `${Math.round(diffMs / 60000)}m ago`
+      } else {
+        formattedHeartbeat = `${Math.round(diffMs / 3600000)}h ago`
+      }
+    } catch {
+      formattedHeartbeat = wire.lastHeartbeatAt
+    }
+  }
+
+  const id = wire.id || fallback?.id || 'srv-unknown'
+  const name = wire.name || fallback?.name || (wire.hostname ?? id)
+
+  return {
+    id,
+    name,
+    provider: wire.provider || fallback?.provider || 'Hetzner',
+    region: (wire.labels && wire.labels.region) || fallback?.region || 'eu-central-1',
+    ip: (wire.labels && wire.labels.ip) || fallback?.ip || '192.0.2.1',
+    privateIp: (wire.labels && wire.labels.privateIp) || fallback?.privateIp || '10.0.0.1',
+    cpu: fallback?.cpu ?? 18,
+    cpuCores: fallback?.cpuCores ?? 4,
+    memory: fallback?.memory ?? 34,
+    memoryTotalGb: fallback?.memoryTotalGb ?? 16,
+    disk: fallback?.disk ?? 42,
+    diskTotalGb: fallback?.diskTotalGb ?? 160,
+    containers: fallback?.containers ?? 2,
+    agentVersion: (wire.labels && wire.labels.agentVersion) || fallback?.agentVersion || 'v1.4.2',
+    status: mappedStatus,
+    lastHeartbeat: wire.lastHeartbeatAt ? formattedHeartbeat : (fallback?.lastHeartbeat ?? '10s ago'),
+    os: fallback?.os ?? 'Ubuntu 24.04 LTS',
+    arch: fallback?.arch ?? 'x86_64',
+    dockerVersion: fallback?.dockerVersion ?? '27.1.1',
+    uptime: fallback?.uptime ?? '14d 6h',
+    load: fallback?.load ?? [0.42, 0.38, 0.35],
+  }
+}
+
+export function findServerByName(name: string, servers: Server[] = mockServers): Server | undefined {
   return servers.find((server) => server.name === name)
 }
 
@@ -85,11 +191,20 @@ export function getServerLogs(server: Server, count = 80): LogLine[] {
   return getServerLogLines(server, count)
 }
 
-export function buildRegistrationCommand(token: string = REGISTRATION_TOKEN_PLACEHOLDER): string {
+export function buildRegistrationCommand(
+  token: string = REGISTRATION_TOKEN_PLACEHOLDER,
+  serverId: string = '<SERVER_UUID>',
+): string {
   return [
-    'curl -fsSL https://get.deploycore.io/agent | sudo sh -s -- \\',
-    `  --register-token ${token} \\`,
-    '  --control-plane https://control.deploycore.io',
+    '# Obtain install-agent.sh from the DeployCore release (verify SHA-256; do not curl|bash).',
+    'sudo ./install-agent.sh \\',
+    '  --install-docker \\',
+    '  --server-url https://control.deploycore.io \\',
+    `  --token ${token} \\`,
+    `  --server-id ${serverId} \\`,
+    '  --binary ./deploycore-agent-linux-amd64 \\',
+    '  --checksum ./SHA256SUMS \\',
+    '  --acme-email ops@example.com',
   ].join('\n')
 }
 

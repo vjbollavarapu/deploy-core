@@ -1,7 +1,10 @@
 import { notFound } from 'next/navigation'
 import { DatabaseOverview } from '@/components/deploycore/databases/database-overview'
 import { findDatabase } from '@/lib/databases'
-import { databases } from '@/lib/mock-data'
+import { databases as rawDatabases } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const databases = getDemoFixtures(rawDatabases)
 
 export default async function DatabaseOverviewPage({
   params,

@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PageContainer } from '@/components/platform/page-container'
@@ -19,7 +20,7 @@ export default function DashboardPage() {
         title="Overview"
         description="Fleet health, capacity, and operational signals across the control plane."
         actions={
-          <Button size="sm">
+          <Button size="sm" nativeButton={false} render={<Link href="/deployments" />}>
             <Plus data-icon="inline-start" />
             New Deployment
           </Button>

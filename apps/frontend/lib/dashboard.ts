@@ -1,13 +1,14 @@
 import {
-  activityFeed,
-  applications,
-  backupStatus,
-  certificateWarnings,
-  databases,
-  deployments,
-  incidents,
-  servers,
+  activityFeed as mockActivityFeed,
+  applications as mockApplications,
+  backupStatus as mockBackupStatus,
+  certificateWarnings as mockCertificateWarnings,
+  databases as mockDatabases,
+  deployments as mockDeployments,
+  incidents as mockIncidents,
+  servers as mockServers,
 } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
 import type { Application, Deployment, Server, Status } from '@/lib/types'
 
 const ATTENTION_STATUSES: Status[] = ['failed', 'degraded', 'offline', 'stopped', 'pending']
@@ -19,6 +20,7 @@ function average(values: number[]) {
 
 /** Weighted fleet utilisation across online / degraded / maintenance hosts. */
 function fleetAverage(selector: (server: Server) => number) {
+  const servers = getDemoFixtures(mockServers)
   const active = servers.filter((server) => server.status !== 'offline')
   if (active.length === 0) return 0
   return average(active.map(selector))
@@ -37,6 +39,11 @@ function sparklineFromBaseline(baseline: number, points = 12): { t: string; valu
 }
 
 export function getInfrastructureStatus() {
+  const servers = getDemoFixtures(mockServers)
+  const applications = getDemoFixtures(mockApplications)
+  const deployments = getDemoFixtures(mockDeployments)
+  const databases = getDemoFixtures(mockDatabases)
+
   const serversOnline = servers.filter((s) => s.status === 'running' || s.status === 'degraded').length
   const applicationsRunning = applications.filter(
     (a) => a.status === 'healthy' || a.status === 'running' || a.status === 'deploying',
@@ -74,6 +81,7 @@ export function getResourceUtilisation() {
 }
 
 export function getApplicationsRequiringAttention(): Application[] {
+  const applications = getDemoFixtures(mockApplications)
   return applications
     .filter((app) => ATTENTION_STATUSES.includes(app.status))
     .sort((a, b) => {
@@ -84,18 +92,20 @@ export function getApplicationsRequiringAttention(): Application[] {
 }
 
 export function getServerCapacity(): Server[] {
+  const servers = getDemoFixtures(mockServers)
   return [...servers].sort((a, b) => Math.max(b.cpu, b.memory, b.disk) - Math.max(a.cpu, a.memory, a.disk))
 }
 
 export function getRecentDeployments(limit = 8): Deployment[] {
+  const deployments = getDemoFixtures(mockDeployments)
   return deployments.slice(0, limit)
 }
 
 export function getDashboardPanels() {
   return {
-    backups: backupStatus,
-    certificates: certificateWarnings,
-    incidents,
-    activity: activityFeed,
+    backups: getDemoFixtures(mockBackupStatus),
+    certificates: getDemoFixtures(mockCertificateWarnings),
+    incidents: getDemoFixtures(mockIncidents),
+    activity: getDemoFixtures(mockActivityFeed),
   }
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/deploycore/deploy-core/apps/api/internal/security"
 	"github.com/deploycore/deploy-core/apps/api/pkg/apierror"
 	"github.com/deploycore/deploy-core/apps/api/pkg/requestid"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 )
 
@@ -58,8 +59,9 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 		return Volume{}, apierror.Validation("invalid volume name", map[string]any{"field": "name"})
 	}
 	labels := mapOrEmpty(in.Labels)
-	labels["deploycore.managed"] = true
+	labels["deploycore.managed"] = "true"
 	labels["deploycore.owner"] = "platform"
+	labels["deploycore.organization_id"] = orgID.String()
 
 	v, err := s.repo.Create(ctx, Volume{
 		OrganizationID: orgID,
@@ -79,11 +81,12 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 		return Volume{}, err
 	}
 
-	cmd, err := s.issue(ctx, v, agentcmd.OpCreateVolume, map[string]any{
-		"volumeId": v.ID.String(),
-		"name":     v.Name,
-		"driver":   v.Driver,
-		"labels":   v.Labels,
+	cmd, err := s.issue(ctx, v, protocol.OpCreateVolume, map[string]any{
+		"name":           v.Name,
+		"driver":         v.Driver,
+		"labels":         v.Labels,
+		"organizationId": v.OrganizationID.String(),
+		"volumeId":       v.ID.String(),
 	}, &actorID)
 	if err != nil {
 		_, _ = s.repo.SetState(ctx, v.ID, StateFailed, nil, nil, nil, err.Error())
@@ -116,9 +119,10 @@ func (s *Service) EnsureDatabaseVolume(ctx context.Context, orgID, serverID uuid
 	}
 	rt := ResourceDatabase
 	labels := map[string]any{
-		"deploycore.managed":  true,
-		"deploycore.owner":    "platform",
-		"deploycore.critical": "database",
+		"deploycore.managed":         "true",
+		"deploycore.owner":           "platform",
+		"deploycore.critical":        "database",
+		"deploycore.organization_id": orgID.String(),
 	}
 	v, err := s.repo.Create(ctx, Volume{
 		OrganizationID:       orgID,
@@ -171,7 +175,7 @@ func (s *Service) Inspect(ctx context.Context, actorID, id uuid.UUID, meta Audit
 	if err := s.authz.RequirePermission(ctx, actorID, v.OrganizationID, rbac.ServerUpdate); err != nil {
 		return Volume{}, err
 	}
-	cmd, err := s.issue(ctx, v, agentcmd.OpInspectVolume, map[string]any{
+	cmd, err := s.issue(ctx, v, protocol.OpInspectVolume, map[string]any{
 		"volumeId": v.ID.String(),
 		"name":     v.Name,
 	}, &actorID)
@@ -227,7 +231,7 @@ func (s *Service) Attach(ctx context.Context, actorID, id uuid.UUID, in AttachIn
 	if err := security.ValidateContainerMountPath(mount); err != nil {
 		return Volume{}, apierror.Validation(err.Error(), map[string]any{"mountPath": err.Error()})
 	}
-	cmd, err := s.issue(ctx, v, agentcmd.OpAttachVolume, map[string]any{
+	cmd, err := s.issue(ctx, v, protocol.OpAttachVolume, map[string]any{
 		"volumeId":     v.ID.String(),
 		"name":         v.Name,
 		"resourceType": rt,
@@ -264,7 +268,7 @@ func (s *Service) Detach(ctx context.Context, actorID, id uuid.UUID, meta AuditM
 	if v.Protected {
 		return Volume{}, apierror.ConflictCode(apierror.CodeVolumeInUse, "cannot detach database-critical protected volume")
 	}
-	cmd, err := s.issue(ctx, v, agentcmd.OpDetachVolume, map[string]any{
+	cmd, err := s.issue(ctx, v, protocol.OpDetachVolume, map[string]any{
 		"volumeId": v.ID.String(),
 		"name":     v.Name,
 	}, &actorID)
@@ -299,7 +303,7 @@ func (s *Service) Delete(ctx context.Context, actorID, id uuid.UUID, meta AuditM
 		return apierror.ConflictCode(apierror.CodeVolumeInUse, "cannot delete attached volume; detach first")
 	}
 
-	cmd, err := s.issue(ctx, v, agentcmd.OpRemoveVolume, map[string]any{
+	cmd, err := s.issue(ctx, v, protocol.OpRemoveVolume, map[string]any{
 		"volumeId": v.ID.String(),
 		"name":     v.Name,
 	}, &actorID)
@@ -336,8 +340,9 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateIn
 	}
 	if in.Labels != nil {
 		after.Labels = in.Labels
-		after.Labels["deploycore.managed"] = true
+		after.Labels["deploycore.managed"] = "true"
 		after.Labels["deploycore.owner"] = "platform"
+		after.Labels["deploycore.organization_id"] = after.OrganizationID.String()
 	}
 	updated, err := s.repo.Update(ctx, after)
 	if err != nil {
@@ -351,8 +356,8 @@ func (s *Service) Update(ctx context.Context, actorID, id uuid.UUID, in UpdateIn
 
 func (s *Service) HandleCommandCompletion(ctx context.Context, cmd agentcmd.Command) error {
 	switch cmd.Operation {
-	case agentcmd.OpCreateVolume, agentcmd.OpRemoveVolume, agentcmd.OpInspectVolume,
-		agentcmd.OpAttachVolume, agentcmd.OpDetachVolume:
+	case protocol.OpCreateVolume, protocol.OpRemoveVolume, protocol.OpInspectVolume,
+		protocol.OpAttachVolume, protocol.OpDetachVolume:
 	default:
 		return nil
 	}
@@ -386,24 +391,24 @@ func (s *Service) HandleCommandCompletion(ctx context.Context, cmd agentcmd.Comm
 	}
 
 	switch cmd.Operation {
-	case agentcmd.OpCreateVolume:
-		if cmd.Status == agentcmd.StatusCompleted {
+	case protocol.OpCreateVolume:
+		if cmd.Status == protocol.StatusCompleted {
 			_, err = s.repo.SetState(ctx, id, StateReady, &cmd.ID, dockerName, usage, "")
-		} else if cmd.Status == agentcmd.StatusFailed {
+		} else if cmd.Status == protocol.StatusFailed {
 			msg := ""
 			if cmd.ErrorMessage != nil {
 				msg = *cmd.ErrorMessage
 			}
 			_, err = s.repo.SetState(ctx, id, StateFailed, &cmd.ID, nil, nil, msg)
 		}
-	case agentcmd.OpInspectVolume:
-		if cmd.Status == agentcmd.StatusCompleted {
+	case protocol.OpInspectVolume:
+		if cmd.Status == protocol.StatusCompleted {
 			_, err = s.repo.SetState(ctx, id, v.State, &cmd.ID, dockerName, usage, "")
 		}
-	case agentcmd.OpRemoveVolume:
-		if cmd.Status == agentcmd.StatusCompleted {
+	case protocol.OpRemoveVolume:
+		if cmd.Status == protocol.StatusCompleted {
 			err = s.repo.SoftDelete(ctx, id, s.now().UTC())
-		} else if cmd.Status == agentcmd.StatusFailed {
+		} else if cmd.Status == protocol.StatusFailed {
 			msg := ""
 			if cmd.ErrorMessage != nil {
 				msg = *cmd.ErrorMessage
@@ -428,7 +433,7 @@ func (s *Service) issue(ctx context.Context, v Volume, op string, payload map[st
 		OrganizationID: v.OrganizationID,
 		ServerID:       v.ServerID,
 		Operation:      op,
-		SchemaVersion:  agentcmd.SchemaVersion,
+		SchemaVersion:  protocol.SchemaVersion,
 		Payload:        payload,
 		IssuedAt:       now,
 		ExpiresAt:      now.Add(15 * time.Minute),

@@ -1,18 +1,8 @@
-import { PageContainer } from '@/components/platform/page-container'
-import { PageHeader } from '@/components/platform/page-header'
-import { ApplicationsFilterTable } from '@/components/deploycore/applications/applications-filter-table'
-import { CreateApplicationWizard } from '@/components/deploycore/applications/create-application-wizard'
+import { ApplicationsPageClient } from '@/components/deploycore/applications/applications-page-client'
 import { applications } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
 
 export default function ApplicationsPage() {
-  return (
-    <PageContainer density="wide">
-      <PageHeader
-        title="Applications"
-        description="Workloads running across projects, environments, and servers."
-        actions={<CreateApplicationWizard />}
-      />
-      <ApplicationsFilterTable applications={applications} />
-    </PageContainer>
-  )
+  return <ApplicationsPageClient applications={getDemoFixtures(applications)} />
 }
+

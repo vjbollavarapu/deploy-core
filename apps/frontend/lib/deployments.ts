@@ -1,3 +1,5 @@
+import { deployments as rawDeployments } from '@/lib/mock-data'
+import { getDemoFixtures, allowSyntheticFallback } from '@/lib/mock-isolation'
 import type {
   Deployment,
   DeploymentEvent,
@@ -8,6 +10,39 @@ import type {
   StatusTone,
 } from '@/lib/types'
 import { TONE_CLASSES } from '@/lib/status'
+
+export function findDeployment(deploymentId: string, list?: Deployment[]): Deployment | undefined {
+  const source = list ?? getDemoFixtures(rawDeployments)
+  const found = source.find((d) => d.id === deploymentId || String(d.number) === deploymentId)
+  if (found) return found
+  if (allowSyntheticFallback() && deploymentId && deploymentId !== 'undefined') {
+    const num = Number.parseInt(deploymentId.replace(/\D/g, ''), 10) || 101
+    return {
+      id: deploymentId,
+      number: num,
+      applicationId: 'app-ecommerce-api',
+      application: 'Core Platform Service',
+      project: 'Core Platform',
+      environment: 'production',
+      revision: `rev-${num}`,
+      commit: '7f9a12c',
+      commitMessage: 'Deploy workload to cluster',
+      author: { name: 'Operator' },
+      triggeredBy: 'Manual Trigger',
+      status: 'healthy',
+      phase: 'RUNNING',
+      duration: '42s',
+      startedAt: 'Just now',
+      repo: 'github.com/deploycore/service',
+      branch: 'main',
+      server: 'hetzner-fsn1-01',
+      image: 'ghcr.io/deploycore/app:latest',
+      steps: buildDeploymentSteps('healthy'),
+      events: buildDeploymentEvents('healthy', 'Core Platform Service'),
+    }
+  }
+  return undefined
+}
 
 export const DEPLOYMENT_PHASES: DeploymentPhase[] = [
   'PENDING',

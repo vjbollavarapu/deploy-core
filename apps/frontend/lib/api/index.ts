@@ -5,6 +5,7 @@
  * separate and map at the client boundary.
  */
 export { API_BASE } from './contract'
+export { apiClient, ApiError, tokenStorage, orgStorage } from './client'
 export type {
   APIError,
   Application,
@@ -14,13 +15,19 @@ export type {
   ConfigScope,
   CreateApplicationRequest,
   CreateDeploymentRequest,
+  CreateEnvironmentRequest,
   CreateProjectRequest,
   CreateServerRequest,
+  Database,
   DatabaseStatus,
   Deployment,
   DeploymentStatus,
   DeploymentTrigger,
+  Domain,
+  CreateDomainRequest,
+  UpdateDomainRequest,
   DNSStatus,
+  Environment as WireEnvironment,
   EnvironmentKind,
   ErrorCode,
   ErrorEnvelope,
@@ -33,6 +40,7 @@ export type {
   PageParams,
   Permission,
   PermissionKey,
+  Project as WireProject,
   RefreshRequest,
   RegisterRequest,
   ReplicaStatus,
@@ -47,6 +55,8 @@ export type {
   Timestamp,
   TLSStatus,
   TokenPair,
+  UpdateEnvironmentRequest,
+  UpdateProjectRequest,
   User,
   UserStatus,
   UUID,

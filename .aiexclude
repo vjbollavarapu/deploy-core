@@ -1,0 +1,25 @@
+# Dependencies & Build noise
+**/node_modules/
+**/dist/
+**/build/
+**/.next/
+**/out/
+**/coverage/
+**/__pycache__/
+
+# Lockfiles
+*.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Sensitive config / data
+.env*
+*.key
+*.pem
+secrets/
+
+# Large binaries/archives
+public/assets/
+*.zip
+*.tar.gz

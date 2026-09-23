@@ -246,11 +246,18 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	if err := h.svc.Delete(r.Context(), user.ID, id, auditMeta(r)); err != nil {
+	res, err := h.svc.Delete(r.Context(), user.ID, id, auditMeta(r))
+	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted":        res.SoftDeleted,
+		"runtimeStopped": res.RuntimeStopped,
+		"volumeDeleted":  res.VolumeDeleted,
+		"message":        res.Message,
+		"databaseId":     res.ID.String(),
+	})
 }
 
 func (h *Handler) Reveal(w http.ResponseWriter, r *http.Request) {
@@ -305,27 +312,27 @@ func (h *Handler) Bootstrap(w http.ResponseWriter, r *http.Request) {
 
 func toResponse(d Database) databaseResponse {
 	out := databaseResponse{
-		ID:                d.ID.String(),
-		OrganizationID:    d.OrganizationID.String(),
-		ProjectID:         d.ProjectID.String(),
-		EnvironmentID:     d.EnvironmentID.String(),
-		ServerID:          d.ServerID.String(),
-		Name:              d.Name,
-		Engine:            d.Engine,
-		EngineVersion:     d.EngineVersion,
-		DatabaseName:      d.DatabaseName,
-		Username:          d.Username,
-		StorageVolumeName: d.StorageVolumeName,
-		VolumeProtected:   d.VolumeProtected,
-		CPUMillis:         d.CPUMillis,
-		MemoryBytes:       d.MemoryBytes,
+		ID:                 d.ID.String(),
+		OrganizationID:     d.OrganizationID.String(),
+		ProjectID:          d.ProjectID.String(),
+		EnvironmentID:      d.EnvironmentID.String(),
+		ServerID:           d.ServerID.String(),
+		Name:               d.Name,
+		Engine:             d.Engine,
+		EngineVersion:      d.EngineVersion,
+		DatabaseName:       d.DatabaseName,
+		Username:           d.Username,
+		StorageVolumeName:  d.StorageVolumeName,
+		VolumeProtected:    d.VolumeProtected,
+		CPUMillis:          d.CPUMillis,
+		MemoryBytes:        d.MemoryBytes,
 		ContainerRuntimeID: d.ContainerRuntimeID,
-		Status:            d.Status,
-		BackupPolicy:      d.BackupPolicy,
-		LastError:         d.LastError,
-		HasCredential:     d.HasCredential,
-		CreatedAt:         d.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:         d.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		Status:             d.Status,
+		BackupPolicy:       d.BackupPolicy,
+		LastError:          d.LastError,
+		HasCredential:      d.HasCredential,
+		CreatedAt:          d.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:          d.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if d.ProvisionCommandID != nil {
 		s := d.ProvisionCommandID.String()

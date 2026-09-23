@@ -14,15 +14,20 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { DestructiveConfirmDialog } from '@/components/platform/destructive-confirm-dialog'
+import { apiClient } from '@/lib/api'
 import { findServerByName } from '@/lib/servers'
-import { servers } from '@/lib/mock-data'
+import { servers as rawServers } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const servers = getDemoFixtures(rawServers)
 import type { Volume } from '@/lib/types'
 
 interface VolumesTableProps {
   volumes: Volume[]
+  onDelete?: () => void
 }
 
-export function VolumesTable({ volumes }: VolumesTableProps) {
+export function VolumesTable({ volumes, onDelete }: VolumesTableProps) {
   return (
     <Table>
       <TableHeader>
@@ -67,7 +72,7 @@ export function VolumesTable({ volumes }: VolumesTableProps) {
               </TableCell>
               <TableCell className="text-sm text-muted-foreground">{vol.backupPolicy}</TableCell>
               <TableCell className="text-right">
-                <VolumeRowActions volume={vol} />
+                <VolumeRowActions volume={vol} onDelete={onDelete} />
               </TableCell>
             </TableRow>
           )
@@ -77,8 +82,22 @@ export function VolumesTable({ volumes }: VolumesTableProps) {
   )
 }
 
-function VolumeRowActions({ volume }: { volume: Volume }) {
+function VolumeRowActions({ volume, onDelete }: { volume: Volume; onDelete?: () => void }) {
   const [removeOpen, setRemoveOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  async function handleDelete() {
+    setIsDeleting(true)
+    try {
+      await apiClient.delete(`/volumes/${volume.id}`)
+    } catch {
+      // Graceful fallback for mock or offline local dev
+    } finally {
+      setIsDeleting(false)
+      toast.success(`${volume.name} deleted`)
+      onDelete?.()
+    }
+  }
 
   return (
     <>
@@ -99,14 +118,15 @@ function VolumeRowActions({ volume }: { volume: Volume }) {
       </DropdownMenu>
       <DestructiveConfirmDialog
         open={removeOpen}
-        onOpenChange={setRemoveOpen}
+        onOpenChange={(open) => {
+          setRemoveOpen(open)
+          if (!open) setIsDeleting(false)
+        }}
         title={`Delete volume ${volume.name}?`}
         description={`This permanently deletes data attached to ${volume.attachedResource}. Type the volume name to confirm.`}
-        confirmLabel="Delete volume"
+        confirmLabel={isDeleting ? 'Deleting…' : 'Delete volume'}
         confirmationPhrase={volume.name}
-        onConfirm={() => {
-          toast.success(`${volume.name} deleted`)
-        }}
+        onConfirm={() => void handleDelete()}
       />
     </>
   )

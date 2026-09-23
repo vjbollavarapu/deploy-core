@@ -1,5 +1,6 @@
 import type { DomainRecord, DomainTlsState, StatusTone } from '@/lib/types'
 import { TONE_CLASSES } from '@/lib/status'
+import { allowSyntheticFallback } from '@/lib/mock-isolation'
 
 export const DOMAIN_TLS_STATES: DomainTlsState[] = [
   'PENDING',
@@ -36,8 +37,69 @@ export const DOMAIN_LIFECYCLE_PHASES: DomainTlsState[] = [
   'ACTIVE',
 ]
 
+export const DOMAIN_STATUS_FILTERS = [
+  { value: 'all', label: 'All TLS states' },
+  { value: 'ACTIVE', label: 'Active' },
+  { value: 'PENDING', label: 'Pending' },
+  { value: 'VERIFYING', label: 'Verifying' },
+  { value: 'ISSUING', label: 'Issuing' },
+  { value: 'EXPIRING', label: 'Expiring' },
+  { value: 'FAILED', label: 'Failed' },
+] as const
+
+export const DNS_STATUS_FILTERS = [
+  { value: 'all', label: 'All DNS' },
+  { value: 'verified', label: 'Verified' },
+  { value: 'pending', label: 'Pending' },
+] as const
+
 export function findDomain(domainId: string, domains: DomainRecord[]): DomainRecord | undefined {
-  return domains.find((domain) => domain.id === domainId)
+  const found = domains.find(
+    (domain) => domain.id === domainId || domain.domain.toLowerCase() === domainId.toLowerCase(),
+  )
+  if (found) return found
+  if (allowSyntheticFallback() && domainId && domainId !== 'undefined') {
+    const host = domainId.includes('.') ? domainId : `${domainId}.deploycore.app`
+    return {
+      id: domainId,
+      domain: host,
+      applicationId: 'app-ecommerce-web',
+      application: 'Ecommerce Web',
+      environment: 'production',
+      routingPort: 3000,
+      status: 'healthy',
+      dnsVerified: true,
+      https: true,
+      certificateIssuer: "Let's Encrypt Authority X3",
+      certExpiryDays: 78,
+      certExpiry: '2026-12-08',
+      certificateIssuedAt: '2026-09-01',
+      nextRenewalAt: '2026-11-08',
+      tlsState: 'ACTIVE',
+      primary: true,
+      lastValidatedAt: '10m ago',
+      validationMessage: 'CNAME points directly to proxy.deploycore.io.',
+      forceHttps: true,
+      requiredRecord: {
+        type: 'CNAME',
+        name: host,
+        value: 'proxy.deploycore.io',
+      },
+      detectedRecord: {
+        type: 'CNAME',
+        name: host,
+        value: 'proxy.deploycore.io',
+      },
+      redirectRules: [
+        {
+          from: `www.${host}`,
+          to: `https://${host}`,
+          code: 301,
+        },
+      ],
+    }
+  }
+  return undefined
 }
 
 export function tlsToneClasses(state: DomainTlsState) {

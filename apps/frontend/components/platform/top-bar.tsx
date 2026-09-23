@@ -35,11 +35,11 @@ export function TopBar() {
           variant="ghost"
           size="icon"
           className="size-8"
+          aria-label="Toggle theme"
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
         >
-          <Sun className="hidden dark:block" />
-          <Moon className="block dark:hidden" />
-          <span className="sr-only">Toggle theme</span>
+          <Sun className="hidden dark:block" aria-hidden />
+          <Moon className="block dark:hidden" aria-hidden />
         </Button>
       </div>
       <CommandPalette open={showPalette} onOpenChange={setShowPalette} />

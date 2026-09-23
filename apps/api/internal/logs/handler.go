@@ -15,8 +15,8 @@ import (
 )
 
 type Handler struct {
-	svc         *Service
-	auth        *auth.Handler
+	svc          *Service
+	auth         *auth.Handler
 	requireAgent func(http.Handler) http.Handler
 }
 
@@ -139,6 +139,12 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, actorID uuid.UU
 	defer unsubscribe()
 
 	writeSSEHeaders(w)
+	// Clear the server WriteTimeout deadline so long-lived SSE streams are not
+	// killed after WRITE_TIMEOUT (default 60s). Keepalive writes alone do not
+	// reset http.Server's write deadline for the response body.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+	}
 	w.WriteHeader(http.StatusOK)
 	_ = writeSSEEvent(w, flusher, "ready", map[string]any{"kind": req.Kind})
 

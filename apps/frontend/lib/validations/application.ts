@@ -85,7 +85,7 @@ const envVarSchema = z.object({
     .string()
     .trim()
     .min(1, 'Key is required')
-    .regex(/^[A-Z][A-Z0-9_]*$/, 'Use UPPER_SNAKE_CASE'),
+    .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Use letters, numbers, or underscores (e.g. API_URL)'),
   value: z.string(),
 })
 
@@ -94,7 +94,7 @@ const secretRefSchema = z.object({
     .string()
     .trim()
     .min(1, 'Secret name is required')
-    .regex(/^[A-Z][A-Z0-9_]*$/, 'Use UPPER_SNAKE_CASE'),
+    .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/, 'Use letters, numbers, or underscores (e.g. DB_PASSWORD)'),
 })
 
 export const configurationStepSchema = z.object({

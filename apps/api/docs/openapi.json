@@ -3,7 +3,7 @@
   "info": {
     "title": "DeployCore Control Plane API",
     "version": "0.32.0",
-    "description": "Public/control-plane HTTP API for DeployCore (`apps/api`).\n\nBase path for versioned resources: `/api/v1`.\nProcess health: `GET /health`, `GET /ready`.\nThis document: `GET /openapi.json`.\n\n**Auth:** Bearer JWT access tokens (user) or agent credentials.\n**Errors:** `{ \"error\": { \"code\", \"message\", \"requestId?\", \"details?\" } }`.\n**Pagination:** `limit` (default 20, max 100) + `offset` on list endpoints; response includes `items`, `limit`, `offset`, `totalCount?`.\n**Permissions:** org-scoped RBAC; see `x-permission` on operations and `Permission` schema.\n**IDs:** UUIDs. **Timestamps:** RFC3339 UTC."
+    "description": "Public/control-plane HTTP API for DeployCore (`apps/api`).\nBase path: `/api/v1`. Spec: `GET /openapi.json`."
   },
   "servers": [
     {
@@ -301,8 +301,8 @@
         "summary": "POST /agents/logs",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -348,8 +348,8 @@
         "summary": "POST /agents/metrics",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -396,11 +396,11 @@
         "parameters": [],
         "responses": {
           "201": {
-            "description": "Auth result",
+            "description": "Created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthResult"
+                  "$ref": "#/components/schemas/JSONObject"
                 }
               }
             }
@@ -455,15 +455,6 @@
               "minimum": 0,
               "default": 0
             }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
           }
         ],
         "responses": {
@@ -492,8 +483,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "application.read"
+        ]
       },
       "post": {
         "operationId": "postApplications",
@@ -538,8 +528,7 @@
               }
             }
           }
-        },
-        "x-permission": "application.create"
+        }
       }
     },
     "/api/v1/applications/{applicationId}": {
@@ -631,8 +620,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "application.read"
+        ]
       },
       "patch": {
         "operationId": "patchApplicationsByApplicationid",
@@ -709,8 +697,8 @@
           }
         ],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -744,8 +732,7 @@
               }
             }
           }
-        },
-        "x-permission": "application.create"
+        }
       }
     },
     "/api/v1/applications/{applicationId}/domains": {
@@ -811,8 +798,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "application.read"
+        ]
       },
       "post": {
         "operationId": "postApplicationsByApplicationidDomains",
@@ -832,8 +818,8 @@
           }
         ],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -867,8 +853,7 @@
               }
             }
           }
-        },
-        "x-permission": "application.create"
+        }
       }
     },
     "/api/v1/applications/{applicationId}/health": {
@@ -934,8 +919,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "application.read"
+        ]
       }
     },
     "/api/v1/applications/{applicationId}/health/probes": {
@@ -992,8 +976,7 @@
               }
             }
           }
-        },
-        "x-permission": "application.create"
+        }
       }
     },
     "/api/v1/applications/{applicationId}/health/samples": {
@@ -1059,8 +1042,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "application.read"
+        ]
       }
     },
     "/api/v1/applications/{applicationId}/logs": {
@@ -1126,8 +1108,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "application.read"
+        ]
       }
     },
     "/api/v1/applications/{applicationId}/metrics": {
@@ -1193,8 +1174,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "application.read"
+        ]
       }
     },
     "/api/v1/applications/{applicationId}/replicas": {
@@ -1260,8 +1240,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "application.read"
+        ]
       }
     },
     "/api/v1/applications/{applicationId}/replicas/scale": {
@@ -1318,8 +1297,7 @@
               }
             }
           }
-        },
-        "x-permission": "application.create"
+        }
       }
     },
     "/api/v1/applications/{applicationId}/replicas/{replicaIndex}/unhealthy": {
@@ -1385,8 +1363,7 @@
               }
             }
           }
-        },
-        "x-permission": "application.create"
+        }
       }
     },
     "/api/v1/applications/{applicationId}/revisions": {
@@ -1452,8 +1429,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "application.read"
+        ]
       }
     },
     "/api/v1/applications/{applicationId}/rollback": {
@@ -1510,8 +1486,7 @@
               }
             }
           }
-        },
-        "x-permission": "application.create"
+        }
       }
     },
     "/api/v1/audit-logs": {
@@ -1539,15 +1514,6 @@
               "type": "integer",
               "minimum": 0,
               "default": 0
-            }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
             }
           }
         ],
@@ -1577,8 +1543,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "audit.read"
+        ]
       }
     },
     "/api/v1/audit-logs/{auditId}": {
@@ -1625,8 +1590,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "audit.read"
+        ]
       }
     },
     "/api/v1/auth/forgot-password": {
@@ -1890,8 +1854,8 @@
         "summary": "POST /auth/reset-password",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -2203,15 +2167,6 @@
               "minimum": 0,
               "default": 0
             }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
           }
         ],
         "responses": {
@@ -2240,8 +2195,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "database.read"
+        ]
       },
       "post": {
         "operationId": "postDatabases",
@@ -2251,8 +2205,8 @@
         "summary": "POST /databases",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -2286,8 +2240,7 @@
               }
             }
           }
-        },
-        "x-permission": "database.create"
+        }
       }
     },
     "/api/v1/databases/{databaseId}": {
@@ -2379,8 +2332,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "database.read"
+        ]
       },
       "patch": {
         "operationId": "patchDatabasesByDatabaseid",
@@ -2501,8 +2453,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "database.read"
+        ]
       },
       "post": {
         "operationId": "postDatabasesByDatabaseidBackups",
@@ -2522,8 +2473,8 @@
           }
         ],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -2557,8 +2508,7 @@
               }
             }
           }
-        },
-        "x-permission": "database.create"
+        }
       }
     },
     "/api/v1/databases/{databaseId}/credentials/reveal": {
@@ -2615,8 +2565,7 @@
               }
             }
           }
-        },
-        "x-permission": "database.create"
+        }
       }
     },
     "/api/v1/deployments": {
@@ -2644,15 +2593,6 @@
               "type": "integer",
               "minimum": 0,
               "default": 0
-            }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
             }
           }
         ],
@@ -2682,8 +2622,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "deployment.read"
+        ]
       }
     },
     "/api/v1/deployments/{deploymentId}": {
@@ -2730,8 +2669,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "deployment.read"
+        ]
       }
     },
     "/api/v1/deployments/{deploymentId}/cancel": {
@@ -2854,8 +2792,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "deployment.read"
+        ]
       }
     },
     "/api/v1/deployments/{deploymentId}/logs": {
@@ -2921,8 +2858,64 @@
           {
             "BearerAuth": []
           }
+        ]
+      }
+    },
+    "/api/v1/domains": {
+      "get": {
+        "operationId": "getDomains",
+        "tags": [
+          "Domains"
         ],
-        "x-permission": "deployment.read"
+        "summary": "GET /domains",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONObject"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/api/v1/domains/{domainId}": {
@@ -3233,15 +3226,6 @@
               "minimum": 0,
               "default": 0
             }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
           }
         ],
         "responses": {
@@ -3270,8 +3254,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "git.connection.read"
+        ]
       },
       "post": {
         "operationId": "postIntegrationsGitConnections",
@@ -3281,8 +3264,8 @@
         "summary": "POST /integrations/git/connections",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -3316,8 +3299,7 @@
               }
             }
           }
-        },
-        "x-permission": "git.connection.manage"
+        }
       }
     },
     "/api/v1/integrations/git/connections/{connectionId}": {
@@ -3409,8 +3391,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "git.connection.read"
+        ]
       },
       "patch": {
         "operationId": "patchIntegrationsGitConnectionsByConnectionid",
@@ -3531,8 +3512,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "git.connection.read"
+        ]
       }
     },
     "/api/v1/integrations/git/connections/{connectionId}/sync": {
@@ -3589,8 +3569,7 @@
               }
             }
           }
-        },
-        "x-permission": "git.connection.manage"
+        }
       }
     },
     "/api/v1/integrations/notifications/channels": {
@@ -3618,15 +3597,6 @@
               "type": "integer",
               "minimum": 0,
               "default": 0
-            }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
             }
           }
         ],
@@ -3656,8 +3626,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "notification.read"
+        ]
       },
       "post": {
         "operationId": "postIntegrationsNotificationsChannels",
@@ -3667,8 +3636,8 @@
         "summary": "POST /integrations/notifications/channels",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -3702,8 +3671,7 @@
               }
             }
           }
-        },
-        "x-permission": "notification.manage"
+        }
       }
     },
     "/api/v1/integrations/notifications/channels/{channelId}": {
@@ -3795,8 +3763,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "notification.read"
+        ]
       },
       "patch": {
         "operationId": "patchIntegrationsNotificationsChannelsByChannelid",
@@ -3879,15 +3846,6 @@
               "type": "integer",
               "minimum": 0,
               "default": 0
-            }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
             }
           }
         ],
@@ -4030,15 +3988,6 @@
               "minimum": 0,
               "default": 0
             }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
           }
         ],
         "responses": {
@@ -4077,8 +4026,8 @@
         "summary": "POST /integrations/notifications/policies",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -4288,15 +4237,6 @@
               "minimum": 0,
               "default": 0
             }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
           }
         ],
         "responses": {
@@ -4325,8 +4265,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "registry.read"
+        ]
       },
       "post": {
         "operationId": "postIntegrationsRegistries",
@@ -4336,8 +4275,8 @@
         "summary": "POST /integrations/registries",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -4371,8 +4310,7 @@
               }
             }
           }
-        },
-        "x-permission": "registry.manage"
+        }
       }
     },
     "/api/v1/integrations/registries/{registryId}": {
@@ -4464,8 +4402,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "registry.read"
+        ]
       },
       "patch": {
         "operationId": "patchIntegrationsRegistriesByRegistryid",
@@ -4549,15 +4486,6 @@
               "minimum": 0,
               "default": 0
             }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
           }
         ],
         "responses": {
@@ -4586,8 +4514,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "webhook.read"
+        ]
       },
       "post": {
         "operationId": "postIntegrationsWebhooks",
@@ -4597,8 +4524,8 @@
         "summary": "POST /integrations/webhooks",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -4632,8 +4559,7 @@
               }
             }
           }
-        },
-        "x-permission": "webhook.manage"
+        }
       }
     },
     "/api/v1/integrations/webhooks/deliveries": {
@@ -4661,15 +4587,6 @@
               "type": "integer",
               "minimum": 0,
               "default": 0
-            }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
             }
           }
         ],
@@ -4699,8 +4616,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "webhook.read"
+        ]
       }
     },
     "/api/v1/integrations/webhooks/emit": {
@@ -4747,8 +4663,7 @@
               }
             }
           }
-        },
-        "x-permission": "webhook.manage"
+        }
       }
     },
     "/api/v1/integrations/webhooks/meta": {
@@ -4785,8 +4700,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "webhook.read"
+        ]
       }
     },
     "/api/v1/integrations/webhooks/{webhookId}": {
@@ -4878,8 +4792,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "webhook.read"
+        ]
       },
       "patch": {
         "operationId": "patchIntegrationsWebhooksByWebhookid",
@@ -5000,8 +4913,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "webhook.read"
+        ]
       }
     },
     "/api/v1/invitations/accept": {
@@ -5138,8 +5050,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "organization.read"
+        ]
       },
       "post": {
         "operationId": "postOrganizations",
@@ -5184,8 +5095,7 @@
               }
             }
           }
-        },
-        "x-permission": "\u2014 (authenticated create)"
+        }
       }
     },
     "/api/v1/organizations/{orgId}": {
@@ -5232,8 +5142,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "organization.read"
+        ]
       },
       "patch": {
         "operationId": "patchOrganizationsByOrgid",
@@ -5292,6 +5201,70 @@
       }
     },
     "/api/v1/organizations/{orgId}/invitations": {
+      "get": {
+        "operationId": "getOrganizationsByOrgidInvitations",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "GET /organizations/{orgId}/invitations",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONObject"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
       "post": {
         "operationId": "postOrganizationsByOrgidInvitations",
         "tags": [
@@ -5310,8 +5283,8 @@
           }
         ],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -5345,8 +5318,63 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/v1/organizations/{orgId}/invitations/{invitationId}": {
+      "delete": {
+        "operationId": "deleteOrganizationsByOrgidInvitationsByInvitationid",
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "DELETE /organizations/{orgId}/invitations/{invitationId}",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "invitationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONObject"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
         },
-        "x-permission": "\u2014 (authenticated create)"
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
       }
     },
     "/api/v1/organizations/{orgId}/members": {
@@ -5412,8 +5440,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "organization.read"
+        ]
       }
     },
     "/api/v1/organizations/{orgId}/members/{memberId}": {
@@ -5609,15 +5636,6 @@
               "minimum": 0,
               "default": 0
             }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
           }
         ],
         "responses": {
@@ -5646,8 +5664,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "project.read"
+        ]
       },
       "post": {
         "operationId": "postProjects",
@@ -5692,8 +5709,7 @@
               }
             }
           }
-        },
-        "x-permission": "project.create"
+        }
       }
     },
     "/api/v1/projects/{projectId}": {
@@ -5785,8 +5801,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "project.read"
+        ]
       },
       "patch": {
         "operationId": "patchProjectsByProjectid",
@@ -5907,8 +5922,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "project.read"
+        ]
       },
       "post": {
         "operationId": "postProjectsByProjectidEnvironments",
@@ -5928,8 +5942,8 @@
           }
         ],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -5963,8 +5977,7 @@
               }
             }
           }
-        },
-        "x-permission": "project.create"
+        }
       }
     },
     "/ready": {
@@ -6025,15 +6038,6 @@
               "type": "integer",
               "minimum": 0,
               "default": 0
-            }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
             }
           }
         ],
@@ -6186,15 +6190,6 @@
               "minimum": 0,
               "default": 0
             }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
           }
         ],
         "responses": {
@@ -6223,8 +6218,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "secret.read_metadata"
+        ]
       },
       "post": {
         "operationId": "postSecrets",
@@ -6234,8 +6228,8 @@
         "summary": "POST /secrets",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -6269,8 +6263,7 @@
               }
             }
           }
-        },
-        "x-permission": "secret.create"
+        }
       }
     },
     "/api/v1/secrets/{secretId}": {
@@ -6362,8 +6355,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "secret.read_metadata"
+        ]
       },
       "patch": {
         "operationId": "patchSecretsBySecretid",
@@ -6447,15 +6439,6 @@
               "minimum": 0,
               "default": 0
             }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
           }
         ],
         "responses": {
@@ -6484,8 +6467,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.read"
+        ]
       },
       "post": {
         "operationId": "postServers",
@@ -6530,8 +6512,7 @@
               }
             }
           }
-        },
-        "x-permission": "server.create"
+        }
       }
     },
     "/api/v1/servers/capacity": {
@@ -6568,8 +6549,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.read"
+        ]
       }
     },
     "/api/v1/servers/{serverId}": {
@@ -6661,8 +6641,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.read"
+        ]
       },
       "patch": {
         "operationId": "patchServersByServerid",
@@ -6830,8 +6809,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.read"
+        ]
       }
     },
     "/api/v1/servers/{serverId}/commands": {
@@ -6897,8 +6875,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.read"
+        ]
       },
       "post": {
         "operationId": "postServersByServeridCommands",
@@ -6918,8 +6895,8 @@
           }
         ],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -6953,8 +6930,7 @@
               }
             }
           }
-        },
-        "x-permission": "server.create"
+        }
       }
     },
     "/api/v1/servers/{serverId}/maintenance": {
@@ -7021,8 +6997,8 @@
           }
         ],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -7046,8 +7022,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.create"
+        ]
       }
     },
     "/api/v1/servers/{serverId}/metrics": {
@@ -7113,8 +7088,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.read"
+        ]
       }
     },
     "/api/v1/servers/{serverId}/metrics/containers": {
@@ -7180,8 +7154,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.read"
+        ]
       }
     },
     "/api/v1/servers/{serverId}/metrics/series": {
@@ -7247,8 +7220,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.read"
+        ]
       }
     },
     "/api/v1/servers/{serverId}/registration-token": {
@@ -7315,8 +7287,8 @@
           }
         ],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -7340,8 +7312,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.create"
+        ]
       }
     },
     "/api/v1/variables": {
@@ -7369,15 +7340,6 @@
               "type": "integer",
               "minimum": 0,
               "default": 0
-            }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
             }
           }
         ],
@@ -7407,8 +7369,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "secret.read_metadata"
+        ]
       },
       "post": {
         "operationId": "postVariables",
@@ -7418,8 +7379,8 @@
         "summary": "POST /variables",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -7453,8 +7414,7 @@
               }
             }
           }
-        },
-        "x-permission": "secret.create"
+        }
       }
     },
     "/api/v1/variables/resolved": {
@@ -7491,8 +7451,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "secret.read_metadata"
+        ]
       }
     },
     "/api/v1/variables/{variableId}": {
@@ -7584,8 +7543,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "secret.read_metadata"
+        ]
       },
       "patch": {
         "operationId": "patchVariablesByVariableid",
@@ -7669,15 +7627,6 @@
               "minimum": 0,
               "default": 0
             }
-          },
-          {
-            "name": "organizationId",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
           }
         ],
         "responses": {
@@ -7706,8 +7655,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.read"
+        ]
       },
       "post": {
         "operationId": "postVolumes",
@@ -7717,8 +7665,8 @@
         "summary": "POST /volumes",
         "parameters": [],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -7752,8 +7700,7 @@
               }
             }
           }
-        },
-        "x-permission": "server.update"
+        }
       }
     },
     "/api/v1/volumes/{volumeId}": {
@@ -7845,8 +7792,7 @@
           {
             "BearerAuth": []
           }
-        ],
-        "x-permission": "server.read"
+        ]
       },
       "patch": {
         "operationId": "patchVolumesByVolumeid",
@@ -7958,8 +7904,7 @@
               }
             }
           }
-        },
-        "x-permission": "server.update"
+        }
       }
     },
     "/api/v1/volumes/{volumeId}/detach": {
@@ -8016,8 +7961,7 @@
               }
             }
           }
-        },
-        "x-permission": "server.update"
+        }
       }
     },
     "/api/v1/volumes/{volumeId}/inspect": {
@@ -8074,8 +8018,7 @@
               }
             }
           }
-        },
-        "x-permission": "server.update"
+        }
       }
     },
     "/api/v1/webhooks/git/{connectionId}": {
@@ -8097,8 +8040,8 @@
           }
         ],
         "responses": {
-          "201": {
-            "description": "Created",
+          "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -8633,6 +8576,53 @@
           }
         }
       },
+      "UpdateProjectRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateEnvironmentRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "slug",
+          "kind"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateEnvironmentRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        }
+      },
       "CreateServerRequest": {
         "type": "object",
         "required": [
@@ -8822,6 +8812,66 @@
           "desiredReplicas": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "Project": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "organizationId": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "createdBy": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Environment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "organizationId": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/UUID"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EnvironmentKind"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/Timestamp"
           }
         }
       },

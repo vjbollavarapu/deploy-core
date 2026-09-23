@@ -1,6 +1,9 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { FeatureFlagsList } from '@/components/deploycore/super-admin/feature-flags-list'
-import { featureFlags } from '@/lib/mock-data'
+import { featureFlags as rawFeatureFlags } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const featureFlags = getDemoFixtures(rawFeatureFlags)
 
 export default function AdminFeaturesPage() {
   return (

@@ -8,6 +8,7 @@ import (
 
 	"github.com/deploycore/deploy-core/apps/api/internal/agentcmd"
 	"github.com/deploycore/deploy-core/apps/api/internal/jobs"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -51,6 +52,17 @@ func (r *Reconciler) JobHandler() jobs.Handler {
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, appID uuid.UUID, replaceIndex int) error {
+	// Do not scale/replace while a deployment is mid-flight — that would bypass
+	// health/activation gates and can disturb zero-downtime handoff (I5).
+	if active, err := r.hasInFlightDeployment(ctx, appID); err != nil {
+		return err
+	} else if active {
+		r.log.Info("skipping replica reconcile; deployment in progress",
+			slog.String("applicationId", appID.String()),
+		)
+		return nil
+	}
+
 	app, err := r.repo.GetApplicationMeta(ctx, appID)
 	if err != nil {
 		return err
@@ -83,6 +95,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, appID uuid.UUID, replaceInde
 			continue
 		}
 		name := ContainerName(app.Slug, revNumber, i)
+		if app.ServerID != nil {
+			if open, err := r.hasOpenLifecycleCommand(ctx, *app.ServerID, appID, name); err != nil {
+				return err
+			} else if open {
+				r.log.Info("skipping replica ensure; lifecycle command already open",
+					slog.String("applicationId", appID.String()),
+					slog.String("containerName", name),
+				)
+				continue
+			}
+		}
 		slot, err := r.repo.UpsertSlot(ctx, UpsertInput{
 			OrganizationID: app.OrganizationID,
 			ApplicationID:  appID,
@@ -101,9 +124,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, appID uuid.UUID, replaceInde
 			_, _ = r.repo.UpdateStatus(ctx, slot.ID, StatusFailed, nil, nil, nil, &msg)
 			continue
 		}
-		healthy := true
-		routing := true
-		_, _ = r.repo.UpdateStatus(ctx, slot.ID, StatusRunning, &healthy, &routing, nil, nil)
+		// Commands issued asynchronously — do not claim healthy/routed until
+		// a deployment activation path (or future command completion) confirms.
+		healthy := false
+		routing := false
+		_, _ = r.repo.UpdateStatus(ctx, slot.ID, StatusStarting, &healthy, &routing, nil, nil)
 	}
 
 	var stopIndexes []int
@@ -123,6 +148,40 @@ func (r *Reconciler) Reconcile(ctx context.Context, appID uuid.UUID, replaceInde
 	return nil
 }
 
+func (r *Reconciler) hasInFlightDeployment(ctx context.Context, appID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM deployments
+			WHERE application_id = $1
+			  AND status NOT IN (
+				'RUNNING','CANCELLED','TIMEOUT',
+				'SOURCE_FAILED','BUILD_FAILED','IMAGE_FAILED',
+				'CONTAINER_FAILED','START_FAILED','HEALTH_CHECK_FAILED','ROUTING_FAILED'
+			  )
+		)`, appID).Scan(&exists)
+	return exists, err
+}
+
+// hasOpenLifecycleCommand prevents reconcile from enqueueing duplicate DEPLOY/START
+// while a prior command is still pending/accepted/running (I8 R1 recovery).
+func (r *Reconciler) hasOpenLifecycleCommand(ctx context.Context, serverID, appID uuid.UUID, containerName string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM agent_commands
+			WHERE server_id = $1
+			  AND status IN ('pending', 'accepted', 'running')
+			  AND operation IN ('DEPLOY_REVISION', 'START_CONTAINER')
+			  AND payload->>'applicationId' = $2
+			  AND (
+				payload->>'containerName' = $3
+				OR payload->>'containerName' IS NULL
+			  )
+		)`, serverID, appID.String(), containerName).Scan(&exists)
+	return exists, err
+}
+
 func (r *Reconciler) issueReplicaLifecycle(ctx context.Context, app AppMeta, slot Replica, revisionID *uuid.UUID, reason string) error {
 	if app.ServerID == nil || r.simulate {
 		return nil
@@ -133,12 +192,12 @@ func (r *Reconciler) issueReplicaLifecycle(ctx context.Context, app AppMeta, slo
 		"replicaIndex":   slot.ReplicaIndex,
 		"containerName":  slot.ContainerName,
 		"reason":         reason,
-		"routingEnabled": true,
+		"routingEnabled": false, // production routing only after deployment activation
 		"desiredAction":  "ensure_running",
 		"routingLabels": map[string]string{
 			"deploycore.application.id": app.ID.String(),
 			"deploycore.replica.index":  fmt.Sprintf("%d", slot.ReplicaIndex),
-			"traefik.enable":            "true",
+			"traefik.enable":            "false",
 		},
 	}
 	if revisionID != nil {
@@ -147,8 +206,8 @@ func (r *Reconciler) issueReplicaLifecycle(ctx context.Context, app AppMeta, slo
 	_, err := r.commands.Create(ctx, agentcmd.Command{
 		OrganizationID: app.OrganizationID,
 		ServerID:       *app.ServerID,
-		Operation:      agentcmd.OpDeployRevision,
-		SchemaVersion:  agentcmd.SchemaVersion,
+		Operation:      protocol.OpDeployRevision,
+		SchemaVersion:  protocol.SchemaVersion,
 		Payload:        payload,
 		IssuedAt:       now,
 		ExpiresAt:      now.Add(10 * time.Minute),
@@ -159,8 +218,8 @@ func (r *Reconciler) issueReplicaLifecycle(ctx context.Context, app AppMeta, slo
 	_, err = r.commands.Create(ctx, agentcmd.Command{
 		OrganizationID: app.OrganizationID,
 		ServerID:       *app.ServerID,
-		Operation:      agentcmd.OpStartContainer,
-		SchemaVersion:  agentcmd.SchemaVersion,
+		Operation:      protocol.OpStartContainer,
+		SchemaVersion:  protocol.SchemaVersion,
 		Payload: map[string]any{
 			"applicationId": app.ID.String(),
 			"replicaIndex":  slot.ReplicaIndex,
@@ -180,8 +239,8 @@ func (r *Reconciler) issueStop(ctx context.Context, app AppMeta, rep Replica, re
 	_, err := r.commands.Create(ctx, agentcmd.Command{
 		OrganizationID: app.OrganizationID,
 		ServerID:       *app.ServerID,
-		Operation:      agentcmd.OpStopContainer,
-		SchemaVersion:  agentcmd.SchemaVersion,
+		Operation:      protocol.OpStopContainer,
+		SchemaVersion:  protocol.SchemaVersion,
 		Payload: map[string]any{
 			"applicationId": app.ID.String(),
 			"replicaIndex":  rep.ReplicaIndex,

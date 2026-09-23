@@ -14,17 +14,19 @@ export function RevisionCompare({ left, right, className }: RevisionCompareProps
 
   return (
     <div className={cn('overflow-hidden rounded-lg border border-border', className)}>
-      <div className="grid grid-cols-[10rem_1fr_1fr] gap-0 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
-        <div>Field</div>
-        <div>
-          Revision {formatRevisionNumber(left.number)}
-          <span className="ml-1 font-mono text-[10px]">{left.commit}</span>
-        </div>
-        <div>
-          Revision {formatRevisionNumber(right.number)}
-          <span className="ml-1 font-mono text-[10px]">{right.commit}</span>
-        </div>
-      </div>
+      <div className="overflow-x-auto">
+        <div className="min-w-[560px]">
+          <div className="grid grid-cols-[10rem_1fr_1fr] gap-0 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+            <div>Field</div>
+            <div>
+              Revision {formatRevisionNumber(left.number)}
+              <span className="ml-1 font-mono text-[10px]">{left.commit}</span>
+            </div>
+            <div>
+              Revision {formatRevisionNumber(right.number)}
+              <span className="ml-1 font-mono text-[10px]">{right.commit}</span>
+            </div>
+          </div>
       <div className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
         {changedCount === 0
           ? 'Revisions are identical across compared fields.'
@@ -44,7 +46,9 @@ export function RevisionCompare({ left, right, className }: RevisionCompareProps
             <CompareValue value={row.right} changed={row.changed} />
           </li>
         ))}
-      </ul>
+        </ul>
+        </div>
+      </div>
     </div>
   )
 }

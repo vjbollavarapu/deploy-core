@@ -22,30 +22,30 @@ const (
 )
 
 type Database struct {
-	ID                  uuid.UUID
-	OrganizationID      uuid.UUID
-	ProjectID           uuid.UUID
-	EnvironmentID       uuid.UUID
-	ServerID            uuid.UUID
-	Name                string
-	Engine              string
-	EngineVersion       string
-	DatabaseName        string
-	Username            string
-	StorageVolumeName   string
-	VolumeProtected     bool
-	CPUMillis           *int
-	MemoryBytes         *int64
-	ContainerRuntimeID  *string
-	Status              string
-	BackupPolicy        map[string]any
-	ProvisionCommandID  *uuid.UUID
-	LastError           string
-	CreatedBy           *uuid.UUID
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	DeletedAt           *time.Time
-	HasCredential       bool
+	ID                 uuid.UUID
+	OrganizationID     uuid.UUID
+	ProjectID          uuid.UUID
+	EnvironmentID      uuid.UUID
+	ServerID           uuid.UUID
+	Name               string
+	Engine             string
+	EngineVersion      string
+	DatabaseName       string
+	Username           string
+	StorageVolumeName  string
+	VolumeProtected    bool
+	CPUMillis          *int
+	MemoryBytes        *int64
+	ContainerRuntimeID *string
+	Status             string
+	BackupPolicy       map[string]any
+	ProvisionCommandID *uuid.UUID
+	LastError          string
+	CreatedBy          *uuid.UUID
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	DeletedAt          *time.Time
+	HasCredential      bool
 }
 
 type BackupPolicy struct {

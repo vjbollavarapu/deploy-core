@@ -42,26 +42,26 @@ type Application struct {
 }
 
 type Config struct {
-	ID               uuid.UUID
-	Version          int
-	SourceType       string
-	RepositoryURL    *string
-	GitBranch        *string
-	DockerfilePath   *string
-	BuildContext     *string
-	ImageReference   *string
-	InternalPort     *int
-	Command          *string
-	Entrypoint       *string
-	CPULimitMillis   *int
-	MemoryLimitBytes *int64
-	RestartPolicy    string
-	HealthCheck      map[string]any
-	RuntimeConfig    map[string]any
+	ID                uuid.UUID
+	Version           int
+	SourceType        string
+	RepositoryURL     *string
+	GitBranch         *string
+	DockerfilePath    *string
+	BuildContext      *string
+	ImageReference    *string
+	InternalPort      *int
+	Command           *string
+	Entrypoint        *string
+	CPULimitMillis    *int
+	MemoryLimitBytes  *int64
+	RestartPolicy     string
+	HealthCheck       map[string]any
+	RuntimeConfig     map[string]any
 	AutoDeployEnabled bool
-	GitConnectionID  *uuid.UUID
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	GitConnectionID   *uuid.UUID
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type CreateInput struct {
@@ -77,22 +77,22 @@ type CreateInput struct {
 }
 
 type ConfigInput struct {
-	SourceType        string
-	RepositoryURL     *string
-	GitBranch         *string
-	DockerfilePath    *string
-	BuildContext      *string
-	ImageReference    *string
-	InternalPort      *int
-	Command           *string
-	Entrypoint        *string
-	CPULimitMillis    *int
-	MemoryLimitBytes  *int64
-	RestartPolicy     string
-	HealthCheck       map[string]any
-	RuntimeConfig     map[string]any
-	AutoDeployEnabled *bool
-	GitConnectionID   *uuid.UUID
+	SourceType         string
+	RepositoryURL      *string
+	GitBranch          *string
+	DockerfilePath     *string
+	BuildContext       *string
+	ImageReference     *string
+	InternalPort       *int
+	Command            *string
+	Entrypoint         *string
+	CPULimitMillis     *int
+	MemoryLimitBytes   *int64
+	RestartPolicy      string
+	HealthCheck        map[string]any
+	RuntimeConfig      map[string]any
+	AutoDeployEnabled  *bool
+	GitConnectionID    *uuid.UUID
 	ClearGitConnection bool
 }
 

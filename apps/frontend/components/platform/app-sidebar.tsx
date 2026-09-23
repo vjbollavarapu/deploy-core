@@ -25,27 +25,34 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
-  useSidebar,
 } from '@/components/ui/sidebar'
+import { useAuth } from '@/lib/auth-context'
 import { adminNavEntry, navGroups } from '@/lib/nav'
 import { OrganizationSwitcher } from './organization-switcher'
 
 export function AppSidebar() {
   const pathname = usePathname()
-  const { state } = useSidebar()
-  const collapsed = state === 'collapsed'
+  const { user, logout } = useAuth()
 
   const isActive = (url: string) => {
     if (url === '/dashboard') return pathname === '/dashboard' || pathname === '/'
     return pathname === url || pathname.startsWith(`${url}/`)
   }
 
+  const displayName = user?.displayName ?? user?.email ?? 'User'
+  const initials = displayName
+    .split(' ')
+    .map((w) => w[0] ?? '')
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" render={<Link href="/dashboard" />}>
+            <SidebarMenuButton size="lg" aria-label="Go to dashboard" render={<Link href="/dashboard" />}>
               <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
                 <svg viewBox="0 0 24 24" fill="none" className="size-4" aria-hidden>
                   <path
@@ -63,8 +70,8 @@ export function AppSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <div className="px-2 pb-1 md:hidden">
-          <OrganizationSwitcher collapsed={collapsed} />
+        <div className="px-2 pt-1 md:hidden">
+          <OrganizationSwitcher className="w-full" />
         </div>
       </SidebarHeader>
 
@@ -117,15 +124,15 @@ export function AppSidebar() {
             <DropdownMenu>
               <DropdownMenuTrigger render={<SidebarMenuButton size="lg" />}>
                 <Avatar className="size-6 rounded-md">
-                  <AvatarFallback className="rounded-md text-xs">AO</AvatarFallback>
+                  <AvatarFallback className="rounded-md text-xs">{initials || 'U'}</AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col gap-0 leading-none">
-                  <span className="text-sm font-medium">Amara Osei</span>
-                  <span className="text-xs text-muted-foreground">Owner</span>
+                  <span className="text-sm font-medium">{displayName}</span>
+                  <span className="text-xs text-muted-foreground">{user?.email ?? ''}</span>
                 </div>
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-56" align="end">
-                <DropdownMenuLabel>amara@daya.io</DropdownMenuLabel>
+                <DropdownMenuLabel>{user?.email ?? 'Account'}</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
                   <DropdownMenuItem render={<Link href="/settings" />}>
@@ -138,7 +145,7 @@ export function AppSidebar() {
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem>
+                <DropdownMenuItem onClick={logout}>
                   <LogOut />
                   Log out
                 </DropdownMenuItem>

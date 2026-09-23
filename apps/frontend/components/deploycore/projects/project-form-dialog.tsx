@@ -21,13 +21,15 @@ import {
   slugify,
   type ProjectFormValues,
 } from '@/lib/validations/project'
+import { apiClient, ApiError } from '@/lib/api'
+import { useOrganization } from '@/lib/auth-context'
 import type { Project } from '@/lib/types'
 
 interface ProjectFormDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   mode: 'create' | 'edit'
-  project?: Pick<Project, 'name' | 'slug'>
+  project?: Pick<Project, 'name' | 'slug'> & { id?: string; description?: string }
   onSuccess?: (values: ProjectFormValues) => void
 }
 
@@ -37,6 +39,7 @@ function ProjectFormFields({
   onOpenChange,
   onSuccess,
 }: Omit<ProjectFormDialogProps, 'open'>) {
+  const { activeOrg } = useOrganization()
   const [serverError, setServerError] = useState<string | null>(null)
   const [slugTouched, setSlugTouched] = useState(mode === 'edit')
 
@@ -45,23 +48,70 @@ function ProjectFormFields({
     control,
     handleSubmit,
     setValue,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<ProjectFormValues>({
     resolver: zodResolver(projectFormSchema),
     defaultValues: {
       name: project?.name ?? '',
       slug: project?.slug ?? '',
-      description: '',
+      description: project?.description ?? '',
     },
   })
 
   async function onSubmit(values: ProjectFormValues) {
     setServerError(null)
     try {
-      await new Promise((resolve) => setTimeout(resolve, 450))
-      toast.success(
-        mode === 'create' ? `Project “${values.name}” created` : `Project “${values.name}” updated`,
-      )
+      if (mode === 'create') {
+        const orgId = activeOrg?.id
+        if (orgId) {
+          try {
+            await apiClient.post('/projects', {
+              organizationId: orgId,
+              name: values.name,
+              slug: values.slug,
+              description: values.description ?? '',
+            })
+          } catch (err) {
+            if (err instanceof ApiError) {
+              if (err.status === 409 || err.code === 'CONFLICT') {
+                setError('slug', {
+                  message: 'A project with this slug already exists in this organization',
+                })
+                return
+              }
+              setServerError(err.message)
+              return
+            }
+            throw err
+          }
+        }
+        toast.success(`Project “${values.name}” created`)
+      } else {
+        const targetId = project?.id || project?.slug
+        if (targetId) {
+          try {
+            await apiClient.patch(`/projects/${targetId}`, {
+              name: values.name,
+              slug: values.slug,
+              description: values.description,
+            })
+          } catch (err) {
+            if (err instanceof ApiError) {
+              if (err.status === 409 || err.code === 'CONFLICT') {
+                setError('slug', {
+                  message: 'A project with this slug already exists',
+                })
+                return
+              }
+              setServerError(err.message)
+              return
+            }
+            throw err
+          }
+        }
+        toast.success(`Project “${values.name}” updated`)
+      }
       onSuccess?.(values)
       onOpenChange(false)
     } catch {

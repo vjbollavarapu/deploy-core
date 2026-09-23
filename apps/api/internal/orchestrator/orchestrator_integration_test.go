@@ -33,26 +33,37 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	if err := db.NewMigrator(pool).Up(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	_, _ = pool.Exec(ctx, `
-		DELETE FROM deployment_events;
-		DELETE FROM jobs;
-		DELETE FROM application_replicas;
-		DELETE FROM health_probe_samples;
-		DELETE FROM application_health;
-		UPDATE deployments SET active_revision_id = NULL, target_revision_id = NULL;
-		DELETE FROM revisions;
-		DELETE FROM deployments;
-		DELETE FROM agent_commands;
-		DELETE FROM application_configs;
-		DELETE FROM applications;
-		DELETE FROM environments;
-		DELETE FROM projects;
-		DELETE FROM servers;
-		DELETE FROM environment_variables;
-		DELETE FROM secrets;
-		DELETE FROM organization_members;
-		DELETE FROM organizations;
-		DELETE FROM users;`)
+	// Best-effort cleanup on shared TEST_DATABASE_URL. Seeds use unique org slugs
+	// so leftover rows from other packages must not fail this package.
+	stmts := []string{
+		`DELETE FROM deployment_events`,
+		`DELETE FROM jobs`,
+		`DELETE FROM application_replicas`,
+		`DELETE FROM health_probe_samples`,
+		`DELETE FROM application_health`,
+		`UPDATE deployments SET active_revision_id = NULL, target_revision_id = NULL`,
+		`DELETE FROM revisions`,
+		`DELETE FROM deployments`,
+		`DELETE FROM agent_commands`,
+		`DELETE FROM application_configs`,
+		`DELETE FROM applications`,
+		`DELETE FROM restore_operations`,
+		`DELETE FROM backups`,
+		`DELETE FROM volumes`,
+		`DELETE FROM managed_databases`,
+		`DELETE FROM environments`,
+		`DELETE FROM projects`,
+		`DELETE FROM servers`,
+		`DELETE FROM environment_variables`,
+		`DELETE FROM secrets`,
+		`DELETE FROM organization_members`,
+		`TRUNCATE audit_logs`,
+		`DELETE FROM organizations`,
+		`DELETE FROM users`,
+	}
+	for _, stmt := range stmts {
+		_, _ = pool.Exec(ctx, stmt)
+	}
 	return pool
 }
 
@@ -73,7 +84,8 @@ func seedApp(t *testing.T, pool *pgxpool.Pool) (orgID, appID, envID, serverID, u
 		t.Fatalf("user: %v", err)
 	}
 	_, err = pool.Exec(ctx, `
-		INSERT INTO organizations (id, name, slug) VALUES ($1, 'O', 'o-b13')`, orgID)
+		INSERT INTO organizations (id, name, slug) VALUES ($1, 'O', $2)`,
+		orgID, "o-"+orgID.String()[:8])
 	if err != nil {
 		t.Fatalf("org: %v", err)
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/deploycore/deploy-core/apps/api/internal/platform/db"
 	"github.com/deploycore/deploy-core/apps/api/internal/rbac"
 	"github.com/deploycore/deploy-core/apps/api/internal/server"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -105,7 +106,7 @@ func TestAgentCommandLifecycle(t *testing.T) {
 	}
 
 	issueBody, _ := json.Marshal(map[string]any{
-		"operation":     agentcmd.OpPullImage,
+		"operation":     protocol.OpPullImage,
 		"correlationId": "corr-1",
 		"payload": map[string]any{
 			"image": "ghcr.io/deploycore/demo:1.0.0",
@@ -124,7 +125,7 @@ func TestAgentCommandLifecycle(t *testing.T) {
 		} `json:"command"`
 	}
 	decode(t, issued, &created)
-	if created.Command.Status != "pending" || created.Command.SchemaVersion != agentcmd.SchemaVersion {
+	if created.Command.Status != "pending" || created.Command.SchemaVersion != protocol.SchemaVersion {
 		t.Fatalf("created=%#v", created.Command)
 	}
 	cmdID := created.Command.ID
@@ -182,7 +183,7 @@ func TestAgentCommandLifecycle(t *testing.T) {
 
 	// Cancel path for a fresh pending command.
 	issue2, _ := json.Marshal(map[string]any{
-		"operation": agentcmd.OpFetchLogs,
+		"operation": protocol.OpFetchLogs,
 		"payload":   map[string]any{"containerId": "abc", "tail": 100},
 	})
 	created2 := doJSON(t, srv, http.MethodPost, "/api/v1/servers/"+serverID+"/commands", issue2, ownerTok)
@@ -199,7 +200,7 @@ func TestAllowedOperationsCatalog(t *testing.T) {
 	if len(ops) < 14 {
 		t.Fatalf("expected full operation catalog, got %d", len(ops))
 	}
-	if !agentcmd.IsAllowedOperation(agentcmd.OpDeployRevision) {
+	if !agentcmd.IsAllowedOperation(protocol.OpDeployRevision) {
 		t.Fatal("DEPLOY_REVISION missing")
 	}
 	if agentcmd.IsAllowedOperation("EXEC_SHELL") {

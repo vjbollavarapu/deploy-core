@@ -1,6 +1,9 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { OrganizationsTable } from '@/components/deploycore/super-admin/organizations-table'
-import { organizations } from '@/lib/mock-data'
+import { organizations as rawOrganizations } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const organizations = getDemoFixtures(rawOrganizations)
 
 export default function AdminOrganizationsPage() {
   return (

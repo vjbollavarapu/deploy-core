@@ -1,19 +1,25 @@
 'use client'
 
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
 import { DetailList } from '@/components/platform/detail-list'
+import { DestructiveConfirmDialog } from '@/components/platform/destructive-confirm-dialog'
 import { EnvironmentBadge } from '@/components/platform/environment-badge'
 import { ResourceUsageBar } from '@/components/platform/resource-usage-bar'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { DatabaseMetricsChart } from '@/components/deploycore/databases/database-metrics-chart'
-import {
-  databaseMetricSeries,
-  getDatabaseBackupJob,
-  getDatabaseBackupRuns,
-} from '@/lib/databases'
-import { servers } from '@/lib/mock-data'
+import { databaseMetricSeries, getDatabaseBackupJob, getDatabaseBackupRuns } from '@/lib/databases'
+import { servers as rawServers } from '@/lib/mock-data'
+import { getDemoFixtures } from '@/lib/mock-isolation'
+
+const servers = getDemoFixtures(rawServers)
 import type { DatabaseInstance } from '@/lib/types'
 
 interface DatabaseOverviewProps {
@@ -134,7 +140,7 @@ export function DatabaseOverview({ database }: DatabaseOverviewProps) {
                   status={
                     run.status === 'success'
                       ? 'healthy'
-                      : run.status === 'running'
+                      : run.status === 'running' || run.status === 'queued'
                         ? 'running'
                         : 'failed'
                   }
@@ -150,30 +156,104 @@ export function DatabaseOverview({ database }: DatabaseOverviewProps) {
 }
 
 export function DatabaseSettingsPanel({ database }: { database: DatabaseInstance }) {
+  const router = useRouter()
+  const [revealAllowed, setRevealAllowed] = useState(database.credentialsRevealAllowed)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+
+  function toggleReveal(checked: boolean) {
+    setRevealAllowed(checked)
+    toast.success(
+      checked
+        ? 'Credential reveal allowed via API policy'
+        : 'Credential reveal locked by API policy',
+    )
+  }
+
+  function confirmDelete() {
+    toast.success(`Database ${database.name} permanently deleted`)
+    router.push('/databases')
+  }
+
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle>General</CardTitle>
-        <CardDescription>Identity and placement for this database instance.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <DetailList
-          columns={2}
-          items={[
-            { label: 'Name', value: database.name },
-            { label: 'Engine', value: `${database.type} ${database.version}` },
-            { label: 'Project', value: database.project },
-            { label: 'Environment', value: <EnvironmentBadge environment={database.environment} /> },
-            { label: 'Server', value: database.server },
-            { label: 'Host', value: <span className="font-mono text-xs">{database.connectionHost}</span> },
-            { label: 'Port', value: String(database.port) },
-            {
-              label: 'Credential policy',
-              value: database.credentialsRevealAllowed ? 'Reveal allowed' : 'Reveal blocked',
-            },
-          ]}
-        />
-      </CardContent>
-    </Card>
+    <div className="flex flex-col gap-4">
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>General configuration</CardTitle>
+          <CardDescription>Identity, placement, and network endpoint metadata.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DetailList
+            columns={2}
+            items={[
+              { label: 'Name', value: database.name },
+              { label: 'Engine', value: `${database.type} ${database.version}` },
+              { label: 'Project', value: database.project },
+              { label: 'Environment', value: <EnvironmentBadge environment={database.environment} /> },
+              { label: 'Server', value: database.server },
+              { label: 'Host', value: <span className="font-mono text-xs">{database.connectionHost}</span> },
+              { label: 'Port', value: String(database.port) },
+              { label: 'Logical DB', value: database.dbName },
+            ]}
+          />
+        </CardContent>
+      </Card>
+
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>Credential security policy</CardTitle>
+          <CardDescription>
+            Enforce control-plane policy locks on whether live connection passwords can be decrypted by operators.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-3.5 bg-muted/20">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium text-foreground">Allow credential reveal</span>
+              <p className="text-xs text-muted-foreground">
+                When enabled, operators with proper role permissions can view connection credentials with audit logging.
+              </p>
+            </div>
+            <Switch checked={revealAllowed} onCheckedChange={toggleReveal} />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card size="sm" className="border-destructive/30">
+        <CardHeader>
+          <CardTitle className="text-destructive">Danger zone</CardTitle>
+          <CardDescription>
+            Irreversible operations on this managed database instance.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium text-foreground">Delete database</span>
+              <p className="text-xs text-muted-foreground">
+                Permanently terminates the database container and detaches persistent volumes.
+              </p>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 data-icon="inline-start" />
+              Delete database
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <DestructiveConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete database ${database.name}?`}
+        description={`This permanently destroys the database ${database.name} and unlinks its storage volumes. This action cannot be undone. Type the database name to confirm.`}
+        confirmLabel="Delete permanently"
+        confirmationPhrase={database.name}
+        onConfirm={confirmDelete}
+      />
+    </div>
   )
 }

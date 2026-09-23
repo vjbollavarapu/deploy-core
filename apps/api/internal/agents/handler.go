@@ -11,6 +11,7 @@ import (
 	"github.com/deploycore/deploy-core/apps/api/internal/security"
 	"github.com/deploycore/deploy-core/apps/api/pkg/apierror"
 	"github.com/deploycore/deploy-core/apps/api/pkg/requestid"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 )
 
@@ -47,23 +48,7 @@ func (h *Handler) RequireAgent(next http.Handler) http.Handler {
 	})
 }
 
-type registerRequest struct {
-	RegistrationToken string `json:"registrationToken"`
-	AgentVersion      string `json:"agentVersion"`
-}
-
-type heartbeatRequest struct {
-	Timestamp       *time.Time `json:"timestamp"`
-	AgentVersion    string     `json:"agentVersion"`
-	DockerStatus    string     `json:"dockerStatus"`
-	CPUPercent      *float64   `json:"cpuPercent"`
-	MemoryUsedBytes *int64     `json:"memoryUsedBytes"`
-	DiskUsedBytes   *int64     `json:"diskUsedBytes"`
-	Load1           *float64   `json:"load1"`
-	ContainerCount  *int       `json:"containerCount"`
-	UptimeSeconds   *int64     `json:"uptimeSeconds"`
-	DockerVersion   *string    `json:"dockerVersion"`
-}
+// Types replaced by protocol-go
 
 func (h *Handler) IssueRegistrationToken(w http.ResponseWriter, r *http.Request) {
 	user, ok := auth.UserFromContext(r.Context())
@@ -132,7 +117,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, apierror.New(http.StatusTooManyRequests, apierror.CodeRateLimited, "rate limit exceeded"))
 		return
 	}
-	var req registerRequest
+	var req protocol.RegisterRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, r, err)
 		return
@@ -143,11 +128,11 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"agent": map[string]any{
-			"id":         res.AgentID.String(),
-			"serverId":   res.ServerID.String(),
-			"credential": res.Credential,
-			"tokenType":  "Bearer",
+		"agent": protocol.RegisterResult{
+			AgentID:    res.AgentID.String(),
+			ServerID:   res.ServerID.String(),
+			Credential: res.Credential,
+			TokenType:  "Bearer",
 		},
 	})
 }
@@ -158,22 +143,33 @@ func (h *Handler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, apierror.Unauthorized("not authenticated"))
 		return
 	}
-	var req heartbeatRequest
+	var req protocol.HeartbeatRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, r, err)
 		return
 	}
 	if err := h.svc.Heartbeat(r.Context(), agent, HeartbeatInput{
-		Timestamp:       req.Timestamp,
-		AgentVersion:    strings.TrimSpace(req.AgentVersion),
-		DockerStatus:    strings.TrimSpace(req.DockerStatus),
-		CPUPercent:      req.CPUPercent,
-		MemoryUsedBytes: req.MemoryUsedBytes,
-		DiskUsedBytes:   req.DiskUsedBytes,
-		Load1:           req.Load1,
-		ContainerCount:  req.ContainerCount,
-		UptimeSeconds:   req.UptimeSeconds,
-		DockerVersion:   req.DockerVersion,
+		Timestamp:         req.Timestamp,
+		AgentVersion:      strings.TrimSpace(req.AgentVersion),
+		DockerStatus:      strings.TrimSpace(req.DockerStatus),
+		CPUPercent:        req.CPUPercent,
+		MemoryUsedBytes:   req.MemoryUsedBytes,
+		DiskUsedBytes:     req.DiskUsedBytes,
+		Load1:             req.Load1,
+		ContainerCount:    req.ContainerCount,
+		UptimeSeconds:     req.UptimeSeconds,
+		DockerVersion:     req.DockerVersion,
+		Hostname:          strings.TrimSpace(req.Hostname),
+		OS:                strings.TrimSpace(req.OS),
+		Architecture:      strings.TrimSpace(req.Architecture),
+		CPUCores:          req.CPUCores,
+		MemoryTotalBytes:  req.MemoryTotalBytes,
+		DiskTotalBytes:    req.DiskTotalBytes,
+		RunningContainers: req.RunningContainers,
+		ImageCount:        req.ImageCount,
+		VolumeCount:       req.VolumeCount,
+		NetworkCount:      req.NetworkCount,
+		AgentState:        strings.TrimSpace(req.AgentState),
 	}); err != nil {
 		writeErr(w, r, err)
 		return

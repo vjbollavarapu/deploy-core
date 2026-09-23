@@ -33,13 +33,13 @@ type DeploymentQueuer interface {
 }
 
 type Service struct {
-	repo   RepositoryStore
+	repo    RepositoryStore
 	deploys DeploymentQueuer
-	authz  *rbac.Authorizer
-	audit  *audit.Writer
-	log    *slog.Logger
-	cfg    ServiceConfig
-	now    func() time.Time
+	authz   *rbac.Authorizer
+	audit   *audit.Writer
+	log     *slog.Logger
+	cfg     ServiceConfig
+	now     func() time.Time
 }
 
 func NewService(repo RepositoryStore, deploys DeploymentQueuer, authz *rbac.Authorizer, auditWriter *audit.Writer, log *slog.Logger, cfg ServiceConfig) *Service {
@@ -409,10 +409,10 @@ func (s *Service) HandleWebhook(ctx context.Context, connectionID uuid.UUID, hea
 	}
 	_ = s.repo.UpdateDelivery(ctx, delivery.ID, status, deployIDs, errMsg)
 	s.writeAudit(ctx, &c.OrganizationID, nil, "git_webhook.push", "git_connection", c.ID.String(), AuditMeta{}, nil, map[string]any{
-		"deliveryId": event.DeliveryID,
-		"repository": event.RepositoryFullName,
-		"branch":     event.Branch,
-		"commitSha":  event.CommitSHA,
+		"deliveryId":  event.DeliveryID,
+		"repository":  event.RepositoryFullName,
+		"branch":      event.Branch,
+		"commitSha":   event.CommitSHA,
 		"deployments": len(deployIDs),
 	})
 	return WebhookResult{
