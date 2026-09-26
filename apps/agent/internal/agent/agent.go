@@ -93,20 +93,18 @@ func New(log *slog.Logger) (*Agent, error) {
 	}
 	a.regMgr = registration.NewManager(&a.cfg, cpCli)
 
-	// If ServerID is not set in environment, check if durable credentials already exist on disk
-	if !a.cfg.IsRegistered() {
+	// Durable credentials.json is the sole proof of completed registration.
+	// AGENT_SERVER_ID may already be set as an installer hint before first register.
+	if a.cfg.IsRegistered() {
 		if cred, err := a.regMgr.LoadCredential(); err == nil && cred.ServerID != "" {
 			if sID, err := uuid.Parse(cred.ServerID); err == nil {
 				a.cfg.ServerID = sID
 				log.Info("agent loaded existing durable credentials", slog.String("server_id", sID.String()))
 			}
 		}
-	}
-
-	if !a.cfg.IsRegistered() {
-		log.Info("agent starting in UNREGISTERED state")
-	} else {
 		log.Info("agent starting in REGISTERED state", slog.String("server_id", a.cfg.ServerID.String()))
+	} else {
+		log.Info("agent starting in UNREGISTERED state")
 	}
 
 	return a, nil

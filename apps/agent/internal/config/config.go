@@ -33,7 +33,9 @@ func Load() (Config, error) {
 		RegistrationToken: os.Getenv("AGENT_REGISTRATION_TOKEN"),
 	}
 
-	// Server ID is optional for unregistered state.
+	// AGENT_SERVER_ID is an optional expected-server hint (installer may set it
+	// before first registration). It alone does not mean registration completed;
+	// durable credentials.json is authoritative (see IsRegistered).
 	if sID := os.Getenv("AGENT_SERVER_ID"); sID != "" {
 		parsed, err := uuid.Parse(sID)
 		if err != nil {
@@ -68,9 +70,18 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// IsRegistered returns true if the agent has a valid ServerID.
+// IsRegistered returns true when durable agent credentials exist on disk.
+// A non-nil ServerID from AGENT_SERVER_ID is not sufficient: the installer may
+// write the expected server UUID before PerformRegistration completes.
 func (c *Config) IsRegistered() bool {
-	return c.ServerID != uuid.Nil
+	if c.CredentialPath == "" {
+		return false
+	}
+	info, err := os.Stat(c.CredentialPath)
+	if err != nil {
+		return false
+	}
+	return info.Mode().IsRegular()
 }
 
 // ClearRegistrationToken removes the token from memory.

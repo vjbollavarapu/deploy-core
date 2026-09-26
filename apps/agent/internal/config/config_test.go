@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -43,26 +44,52 @@ func TestLoad_ValidUnregistered(t *testing.T) {
 	}
 }
 
-func TestLoad_ValidRegistered(t *testing.T) {
+func TestLoad_ParsesServerIDWithoutImplyingRegistered(t *testing.T) {
+	// First-install OCI defect: installer writes AGENT_SERVER_ID before credentials.json exists.
 	os.Clearenv()
 	os.Setenv("AGENT_CONTROL_PLANE_URL", "https://cp.example.com")
 	id := uuid.New().String()
 	os.Setenv("AGENT_SERVER_ID", id)
 	os.Setenv("AGENT_HEARTBEAT_INTERVAL", "15s")
+	credPath := filepath.Join(t.TempDir(), "credentials.json")
+	os.Setenv("AGENT_CREDENTIAL_PATH", credPath)
 
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if !cfg.IsRegistered() {
-		t.Error("expected IsRegistered to be true")
-	}
 	if cfg.ServerID.String() != id {
 		t.Errorf("expected ID %s, got %s", id, cfg.ServerID.String())
 	}
 	if cfg.HeartbeatInterval != 15*time.Second {
 		t.Errorf("expected heartbeat 15s, got %v", cfg.HeartbeatInterval)
+	}
+	if cfg.IsRegistered() {
+		t.Error("AGENT_SERVER_ID alone must not imply IsRegistered when credentials.json is missing")
+	}
+}
+
+func TestIsRegistered_RequiresDurableCredentials(t *testing.T) {
+	credPath := filepath.Join(t.TempDir(), "credentials.json")
+	cfg := config.Config{
+		ServerID:       uuid.New(),
+		CredentialPath: credPath,
+	}
+	if cfg.IsRegistered() {
+		t.Fatal("expected IsRegistered false before credentials exist")
+	}
+
+	if err := os.WriteFile(credPath, []byte("{}\n"), 0600); err != nil {
+		t.Fatalf("write credentials: %v", err)
+	}
+	if !cfg.IsRegistered() {
+		t.Fatal("expected IsRegistered true when credentials.json exists")
+	}
+
+	emptyPath := config.Config{ServerID: uuid.New()}
+	if emptyPath.IsRegistered() {
+		t.Fatal("empty CredentialPath must not report registered")
 	}
 }
 
