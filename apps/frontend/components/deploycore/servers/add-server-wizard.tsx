@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Plus,
+  RefreshCw,
   Server as ServerIcon,
   Shield,
 } from 'lucide-react'
@@ -56,6 +57,13 @@ type RegistrationTokenResponse = {
 }
 type GetServerResponse = { server?: WireServer }
 
+function formatTokenExpiry(expiresAt: string | null | undefined): string | null {
+  if (!expiresAt) return null
+  const d = new Date(expiresAt)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
 export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
   const { activeOrg } = useOrganization()
   const demo = isDemoModeEnabled()
@@ -64,8 +72,10 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
   const [verified, setVerified] = useState(false)
   const [checking, setChecking] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
   const [createdServerId, setCreatedServerId] = useState<string | null>(null)
   const [registrationToken, setRegistrationToken] = useState<string | null>(null)
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null)
   const [verifyStatus, setVerifyStatus] = useState<string | null>(null)
   const [verifyDetail, setVerifyDetail] = useState<string | null>(null)
 
@@ -90,14 +100,17 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
   const tokenForCommand = registrationToken || (demo ? REGISTRATION_TOKEN_PLACEHOLDER : '…')
   const serverIdForCommand = createdServerId || (demo ? '<SERVER_UUID>' : '…')
   const registrationCommand = buildRegistrationCommand(tokenForCommand, serverIdForCommand)
+  const expiryLabel = formatTokenExpiry(tokenExpiresAt)
 
   function resetWizardState() {
     setStep(0)
     setVerified(false)
     setChecking(false)
     setCreating(false)
+    setRegenerating(false)
     setCreatedServerId(null)
     setRegistrationToken(null)
+    setTokenExpiresAt(null)
     setVerifyStatus(null)
     setVerifyDetail(null)
     reset(DEFAULT_ADD_SERVER_VALUES)
@@ -108,6 +121,11 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
     if (!next) {
       resetWizardState()
     }
+  }
+
+  function applyIssuedToken(token: string, expiresAt?: string | null) {
+    setRegistrationToken(token)
+    setTokenExpiresAt(expiresAt ?? null)
   }
 
   function validateCurrentStep(): boolean {
@@ -147,7 +165,10 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
 
     if (demo) {
       setCreatedServerId('demo-server')
-      setRegistrationToken(REGISTRATION_TOKEN_PLACEHOLDER)
+      applyIssuedToken(
+        REGISTRATION_TOKEN_PLACEHOLDER,
+        new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      )
       return true
     }
 
@@ -186,13 +207,49 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
       }
 
       setCreatedServerId(serverId)
-      setRegistrationToken(token)
+      applyIssuedToken(token, tok.registrationToken?.expiresAt)
       return true
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed to register server')
       return false
     } finally {
       setCreating(false)
+    }
+  }
+
+  async function regenerateRegistrationToken() {
+    if (regenerating || creating) return
+
+    if (demo) {
+      applyIssuedToken(
+        REGISTRATION_TOKEN_PLACEHOLDER,
+        new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      )
+      toast.success('Issued a new demo registration token')
+      return
+    }
+
+    if (!createdServerId) {
+      toast.error('Create the server before issuing a registration token.')
+      return
+    }
+
+    setRegenerating(true)
+    try {
+      const tok = await apiClient.post<RegistrationTokenResponse>(
+        `/servers/${createdServerId}/registration-token`,
+      )
+      const token = tok.registrationToken?.token
+      if (!token) {
+        toast.error('Control Plane did not return a registration token.')
+        return
+      }
+      applyIssuedToken(token, tok.registrationToken?.expiresAt)
+      toast.success('New registration token issued')
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to issue registration token')
+    } finally {
+      setRegenerating(false)
     }
   }
 
@@ -288,15 +345,15 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
           </Button>
         }
       />
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[min(90vh,52rem)] w-full max-w-[calc(100%-2rem)] flex-col gap-4 overflow-hidden sm:max-w-5xl">
+        <DialogHeader className="min-w-0 shrink-0">
           <DialogTitle>Add server</DialogTitle>
           <DialogDescription>
             Register a host, install the agent, and verify connectivity.
           </DialogDescription>
         </DialogHeader>
 
-        <ol className="grid grid-cols-3 gap-2 sm:grid-cols-6" aria-label="Wizard progress">
+        <ol className="grid min-w-0 shrink-0 grid-cols-3 gap-2 sm:grid-cols-6" aria-label="Wizard progress">
           {SERVER_WIZARD_STEPS.map((item, index) => {
             const complete = index < step
             const currentStep = index === step
@@ -315,7 +372,7 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
                 </span>
                 <span
                   className={cn(
-                    'truncate text-center text-[10px] leading-tight',
+                    'w-full truncate text-center text-[10px] leading-tight',
                     currentStep ? 'font-medium text-foreground' : 'text-muted-foreground',
                   )}
                 >
@@ -326,7 +383,8 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
           })}
         </ol>
 
-        <div className="min-h-56">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden pr-0.5">
+          <div className="min-h-56 min-w-0">
           {current.id === 'information' && (
             <FieldGroup>
               <Field data-invalid={Boolean(errors.name)}>
@@ -403,36 +461,67 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
           )}
 
           {current.id === 'registration' && (
-            <div className="flex flex-col gap-3">
+            <div className="flex min-w-0 flex-col gap-3">
               <p className="text-sm text-muted-foreground">
-                A secure temporary registration token was issued for{' '}
+                A temporary registration token was issued for{' '}
                 <span className="font-medium text-foreground">{values.name || 'this server'}</span>
                 {createdServerId ? (
                   <>
                     {' '}
-                    (<span className="font-mono text-xs">{createdServerId}</span>)
+                    (<span className="break-all font-mono text-xs">{createdServerId}</span>)
                   </>
                 ) : null}
-                . It expires shortly and can only be used once.
+                . Tokens are single-use and time-limited. If this one expires before the agent
+                registers, generate a new token for the same server — do not delete or recreate
+                the server.
               </p>
-              <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Shield className="size-3.5" />
-                  Temporary token
+              <div className="min-w-0 rounded-lg border border-border bg-muted/40 px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                    <Shield className="size-3.5 shrink-0" />
+                    Temporary token
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={regenerating || creating || (!createdServerId && !demo)}
+                    onClick={() => void regenerateRegistrationToken()}
+                  >
+                    <RefreshCw
+                      data-icon="inline-start"
+                      className={cn(regenerating && 'animate-spin')}
+                    />
+                    {regenerating ? 'Generating…' : 'Generate new token'}
+                  </Button>
                 </div>
-                <p className="mt-1 font-mono text-sm text-foreground break-all">
+                <p className="mt-2 break-all font-mono text-sm text-foreground">
                   {registrationToken || (demo ? REGISTRATION_TOKEN_PLACEHOLDER : 'Issuing…')}
                 </p>
+                {expiryLabel ? (
+                  <p className="mt-1.5 text-xs text-muted-foreground">Expires {expiryLabel}</p>
+                ) : (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Temporary and single-use. Generate a new token if registration fails or the
+                    current token expires.
+                  </p>
+                )}
               </div>
-              <CodeBlock code={registrationCommand} label="Registration command" />
+              <CodeBlock
+                code={registrationCommand}
+                label="Registration command"
+                className="min-w-0 w-full"
+              />
               <p className="text-xs text-muted-foreground">
-                Copy the command with the token embedded. Do not commit this token to source control.
+                Copy the command with the current token. Do not commit this token to source
+                control. After generating a new token, use the updated command only.
               </p>
             </div>
           )}
 
           {current.id === 'install' && (
-            <div className="flex flex-col gap-3 text-sm">
+            <div className="flex min-w-0 flex-col gap-3 text-sm">
               <p className="text-muted-foreground">
                 On <span className="font-medium text-foreground">{values.name}</span>, run the
                 registration command as root (or with sudo). The installer will:
@@ -443,19 +532,27 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
                 <li>Start the agent systemd service</li>
                 <li>Open an outbound mTLS connection to the control plane</li>
               </ul>
-              <CodeBlock code={registrationCommand} label="Install on host" />
+              <CodeBlock
+                code={registrationCommand}
+                label="Install on host"
+                className="min-w-0 w-full"
+              />
+              <p className="text-xs text-muted-foreground">
+                If the token expires before first registration, go back to Registration and choose
+                Generate new token for this same server.
+              </p>
             </div>
           )}
 
           {current.id === 'verification' && (
-            <div className="flex flex-col gap-3">
+            <div className="flex min-w-0 flex-col gap-3">
               <p className="text-sm text-muted-foreground">
                 Waiting for the first heartbeat from{' '}
                 <span className="font-medium text-foreground">{values.name}</span>
                 {createdServerId ? (
                   <>
                     {' '}
-                    (<span className="font-mono text-xs">{createdServerId}</span>)
+                    (<span className="break-all font-mono text-xs">{createdServerId}</span>)
                   </>
                 ) : null}
                 .
@@ -486,7 +583,7 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
                       : 'Waiting for agent heartbeat…'}
                 </div>
                 {verifyDetail ? (
-                  <p className="pl-4 text-xs opacity-80">{verifyDetail}</p>
+                  <p className="break-all pl-4 text-xs opacity-80">{verifyDetail}</p>
                 ) : null}
               </div>
               <Button
@@ -520,9 +617,10 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
               </p>
             </div>
           )}
+          </div>
         </div>
 
-        <DialogFooter className="items-center sm:justify-between">
+        <DialogFooter className="shrink-0 items-center sm:justify-between">
           <Button
             type="button"
             variant="ghost"
@@ -539,7 +637,12 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
               Done
             </Button>
           ) : (
-            <Button type="button" size="sm" disabled={creating} onClick={() => void goNext()}>
+            <Button
+              type="button"
+              size="sm"
+              disabled={creating || regenerating}
+              onClick={() => void goNext()}
+            >
               {creating ? 'Registering…' : 'Continue'}
               <ChevronRight data-icon="inline-end" />
             </Button>

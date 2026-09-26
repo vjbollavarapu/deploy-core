@@ -157,7 +157,8 @@ export function ServerAgentPanel({ server }: { server: Server }) {
         <CardHeader>
           <CardTitle>Reconnect</CardTitle>
           <CardDescription>
-            If the agent loses connectivity, re-run registration with a fresh temporary token.
+            If first registration fails or the temporary token expires, issue a new token for this
+            same server — do not delete or recreate the host record.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -166,8 +167,9 @@ export function ServerAgentPanel({ server }: { server: Server }) {
             label="Diagnostics"
           />
           <p className="text-xs text-muted-foreground">
-            Prefer rotating tokens from Add server → Registration rather than reusing expired
-            credentials.
+            Use Add server → Registration → Generate new token for the same server. After a
+            successful register, the agent uses durable credentials — never reuse an expired
+            registration token.
           </p>
         </CardContent>
       </Card>
