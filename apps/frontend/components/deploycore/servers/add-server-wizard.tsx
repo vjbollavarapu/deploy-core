@@ -538,8 +538,8 @@ export function AddServerWizard({ onSuccess }: AddServerWizardProps = {}) {
                 className="min-w-0 w-full"
               />
               <p className="text-xs text-muted-foreground">
-                If the token expires before first registration, go back to Registration and choose
-                Generate new token for this same server.
+                If the token expires before first registration, use Generate new token on this step,
+                or open the server’s Agent page after finishing the wizard.
               </p>
             </div>
           )}

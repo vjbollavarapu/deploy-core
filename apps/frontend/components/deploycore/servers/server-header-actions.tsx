@@ -23,7 +23,7 @@ export function ServerHeaderActions({ server }: ServerHeaderActionsProps) {
   const [consoleOpen, setConsoleOpen] = useState(false)
   const [isRestarting, setIsRestarting] = useState(false)
 
-  const sshCommand = `ssh root@${server.ip}`
+  const sshCommand = server.ip ? `ssh root@${server.ip}` : '# Public IP not reported for this server yet'
 
   async function handleRestartAgent() {
     setIsRestarting(true)
@@ -71,7 +71,8 @@ export function ServerHeaderActions({ server }: ServerHeaderActionsProps) {
               Host Console & SSH Access
             </DialogTitle>
             <DialogDescription>
-              Connect to {server.name} ({server.ip}) via terminal or SSH client.
+              Connect to {server.name}
+              {server.ip ? ` (${server.ip})` : ''} via terminal or SSH client.
             </DialogDescription>
           </DialogHeader>
 

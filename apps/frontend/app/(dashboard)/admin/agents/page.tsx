@@ -24,11 +24,13 @@ export default function AdminAgentsPage() {
             {servers.map((server) => (
               <TableRow key={server.id}>
                 <TableCell className="font-medium">{server.name}</TableCell>
-                <TableCell className="font-mono text-xs">{server.agentVersion}</TableCell>
+                <TableCell className="font-mono text-xs">{server.agentVersion ?? '—'}</TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
-                  {server.dockerVersion}
+                  {server.dockerVersion ?? '—'}
                 </TableCell>
-                <TableCell className="text-sm text-muted-foreground">{server.lastHeartbeat}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {server.lastHeartbeat ?? 'No heartbeat yet'}
+                </TableCell>
                 <TableCell>
                   <StatusBadge status={server.status} showDot />
                 </TableCell>

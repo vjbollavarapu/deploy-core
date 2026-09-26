@@ -123,6 +123,8 @@ export interface CreateServerRequest {
   provider?: string
   hostname?: string
   region?: string
+  publicIp?: string
+  privateIp?: string
   labels?: Record<string, string>
   cpuCores?: number
   memoryBytes?: number
@@ -192,8 +194,21 @@ export interface Server {
   maintenanceMode?: boolean
   hostname?: string
   provider?: string
+  region?: string
+  publicIp?: string | null
+  privateIp?: string | null
+  architecture?: string
+  operatingSystem?: string
+  cpuCores?: number | null
+  memoryBytes?: number | null
+  diskBytes?: number | null
+  cpuAllocatedMillis?: number
+  memoryAllocatedBytes?: number
+  diskAllocatedBytes?: number
+  dockerVersion?: string | null
   labels?: Record<string, string>
   lastHeartbeatAt?: string | null
+  createdBy?: string | null
   createdAt?: Timestamp
   updatedAt?: Timestamp
 }

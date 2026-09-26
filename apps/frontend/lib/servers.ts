@@ -7,13 +7,6 @@ import {
   volumes as rawVolumes,
 } from '@/lib/mock-data'
 import { getDemoFixtures, allowSyntheticFallback } from '@/lib/mock-isolation'
-
-const applications = getDemoFixtures(rawApplications)
-const containerImages = getDemoFixtures(rawContainerImages)
-const containers = getDemoFixtures(rawContainers)
-const networks = getDemoFixtures(rawNetworks)
-const mockServers = getDemoFixtures(rawMockServers)
-const volumes = getDemoFixtures(rawVolumes)
 import { getServerLogLines } from '@/lib/observability'
 import type { Server as WireServer } from '@/lib/api'
 import type {
@@ -26,6 +19,13 @@ import type {
   Status,
   Volume,
 } from '@/lib/types'
+
+const applications = getDemoFixtures(rawApplications)
+const containerImages = getDemoFixtures(rawContainerImages)
+const containers = getDemoFixtures(rawContainers)
+const networks = getDemoFixtures(rawNetworks)
+const mockServers = getDemoFixtures(rawMockServers)
+const volumes = getDemoFixtures(rawVolumes)
 
 export const SERVER_PROVIDERS = [
   'AWS',
@@ -63,11 +63,56 @@ export type ServerSectionId = (typeof SERVER_SECTIONS)[number]['id']
 /** Deterministic placeholder registration token for UI demos. */
 export const REGISTRATION_TOKEN_PLACEHOLDER = 'dc_reg_tmp_8f3a2c1e9b7d4a60'
 
+/** Neutral display for values the Control Plane has not reported. */
+export const UNAVAILABLE = '—'
+
+export function displayServerValue(
+  value: string | number | null | undefined,
+  empty: string = UNAVAILABLE,
+): string {
+  if (value === null || value === undefined || value === '') return empty
+  return String(value)
+}
+
+/**
+ * Initial registration incomplete: no successful agent heartbeat has ever been
+ * recorded. A previously registered agent that is temporarily offline retains
+ * lastHeartbeatAt from its last heartbeat — do not treat that as first-boot recovery.
+ */
+export function canIssueInitialRegistrationToken(server: Server): boolean {
+  return server.lastHeartbeatAt == null && server.status === 'offline'
+}
+
+function bytesToGb(bytes: number | null | undefined): number | null {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return null
+  return Math.round((bytes / (1024 * 1024 * 1024)) * 10) / 10
+}
+
+function formatHeartbeatRelative(iso: string): string {
+  try {
+    const diffMs = Date.now() - new Date(iso).getTime()
+    if (Number.isNaN(diffMs)) return iso
+    if (diffMs < 60000) {
+      return `${Math.max(1, Math.round(diffMs / 1000))}s ago`
+    }
+    if (diffMs < 3600000) {
+      return `${Math.round(diffMs / 60000)}m ago`
+    }
+    if (diffMs < 86400000) {
+      return `${Math.round(diffMs / 3600000)}h ago`
+    }
+    return `${Math.round(diffMs / 86400000)}d ago`
+  } catch {
+    return iso
+  }
+}
+
 export function findServer(serverId: string, servers: Server[] = mockServers): Server | undefined {
   const found = servers.find(
     (server) => server.id === serverId || server.name.toLowerCase() === serverId.toLowerCase(),
   )
   if (found) return found
+  // Demo-only synthetic host for offline preview of unknown IDs.
   if (allowSyntheticFallback() && serverId && serverId !== 'undefined') {
     return {
       id: serverId,
@@ -86,6 +131,7 @@ export function findServer(serverId: string, servers: Server[] = mockServers): S
       agentVersion: 'v1.4.2',
       status: 'running',
       lastHeartbeat: '10s ago',
+      lastHeartbeatAt: new Date().toISOString(),
       os: 'Ubuntu 24.04 LTS',
       arch: 'x86_64',
       dockerVersion: '27.1.1',
@@ -101,56 +147,58 @@ export function wireServerToViewModel(
   fallback?: Partial<Server>,
 ): Server {
   const isMaint = Boolean(wire.maintenanceMode || wire.status === 'MAINTENANCE')
-  let mappedStatus: Status = 'running'
+  let mappedStatus: Status = 'offline'
   if (isMaint) {
     mappedStatus = 'maintenance'
+  } else if (wire.status === 'ONLINE') {
+    mappedStatus = 'running'
   } else if (wire.status === 'DEGRADED') {
     mappedStatus = 'degraded'
   } else if (wire.status === 'OFFLINE' || wire.status === 'DISABLED') {
     mappedStatus = 'offline'
+  } else if (wire.status) {
+    mappedStatus = 'unknown'
   }
 
-  let formattedHeartbeat = 'Just now'
-  if (wire.lastHeartbeatAt) {
-    try {
-      const diffMs = Date.now() - new Date(wire.lastHeartbeatAt).getTime()
-      if (diffMs < 60000) {
-        formattedHeartbeat = `${Math.max(1, Math.round(diffMs / 1000))}s ago`
-      } else if (diffMs < 3600000) {
-        formattedHeartbeat = `${Math.round(diffMs / 60000)}m ago`
-      } else {
-        formattedHeartbeat = `${Math.round(diffMs / 3600000)}h ago`
-      }
-    } catch {
-      formattedHeartbeat = wire.lastHeartbeatAt
-    }
-  }
+  const lastHeartbeatAt = wire.lastHeartbeatAt ?? null
+  const lastHeartbeat = lastHeartbeatAt ? formatHeartbeatRelative(lastHeartbeatAt) : null
 
   const id = wire.id || fallback?.id || 'srv-unknown'
   const name = wire.name || fallback?.name || (wire.hostname ?? id)
 
+  const labelAgent =
+    wire.labels && typeof wire.labels.agentVersion === 'string'
+      ? wire.labels.agentVersion
+      : null
+
   return {
     id,
     name,
-    provider: wire.provider || fallback?.provider || 'Hetzner',
-    region: (wire.labels && wire.labels.region) || fallback?.region || 'eu-central-1',
-    ip: (wire.labels && wire.labels.ip) || fallback?.ip || '192.0.2.1',
-    privateIp: (wire.labels && wire.labels.privateIp) || fallback?.privateIp || '10.0.0.1',
-    cpu: fallback?.cpu ?? 18,
-    cpuCores: fallback?.cpuCores ?? 4,
-    memory: fallback?.memory ?? 34,
-    memoryTotalGb: fallback?.memoryTotalGb ?? 16,
-    disk: fallback?.disk ?? 42,
-    diskTotalGb: fallback?.diskTotalGb ?? 160,
-    containers: fallback?.containers ?? 2,
-    agentVersion: (wire.labels && wire.labels.agentVersion) || fallback?.agentVersion || 'v1.4.2',
+    provider: wire.provider || fallback?.provider || 'Unknown',
+    region: wire.region?.trim() ? wire.region : (fallback?.region ?? null),
+    ip: wire.publicIp?.trim() ? wire.publicIp : (fallback?.ip ?? null),
+    privateIp: wire.privateIp?.trim() ? wire.privateIp : (fallback?.privateIp ?? null),
+    // Live utilization is not on the server list/detail contract — never invent it.
+    cpu: fallback?.cpu ?? null,
+    cpuCores: wire.cpuCores ?? fallback?.cpuCores ?? null,
+    memory: fallback?.memory ?? null,
+    memoryTotalGb: bytesToGb(wire.memoryBytes) ?? fallback?.memoryTotalGb ?? null,
+    disk: fallback?.disk ?? null,
+    diskTotalGb: bytesToGb(wire.diskBytes) ?? fallback?.diskTotalGb ?? null,
+    containers: fallback?.containers ?? null,
+    agentVersion: labelAgent ?? fallback?.agentVersion ?? null,
     status: mappedStatus,
-    lastHeartbeat: wire.lastHeartbeatAt ? formattedHeartbeat : (fallback?.lastHeartbeat ?? '10s ago'),
-    os: fallback?.os ?? 'Ubuntu 24.04 LTS',
-    arch: fallback?.arch ?? 'x86_64',
-    dockerVersion: fallback?.dockerVersion ?? '27.1.1',
-    uptime: fallback?.uptime ?? '14d 6h',
-    load: fallback?.load ?? [0.42, 0.38, 0.35],
+    lastHeartbeat,
+    lastHeartbeatAt,
+    os: wire.operatingSystem?.trim()
+      ? wire.operatingSystem
+      : (fallback?.os ?? null),
+    arch: wire.architecture?.trim() ? wire.architecture : (fallback?.arch ?? null),
+    dockerVersion: wire.dockerVersion?.trim()
+      ? wire.dockerVersion
+      : (fallback?.dockerVersion ?? null),
+    uptime: fallback?.uptime ?? null,
+    load: fallback?.load ?? null,
   }
 }
 
@@ -194,12 +242,13 @@ export function getServerLogs(server: Server, count = 80): LogLine[] {
 export function buildRegistrationCommand(
   token: string = REGISTRATION_TOKEN_PLACEHOLDER,
   serverId: string = '<SERVER_UUID>',
+  serverUrl: string = 'https://control.deploycore.io',
 ): string {
   return [
     '# Obtain install-agent.sh from the DeployCore release (verify SHA-256; do not curl|bash).',
     'sudo ./install-agent.sh \\',
     '  --install-docker \\',
-    '  --server-url https://control.deploycore.io \\',
+    `  --server-url ${serverUrl} \\`,
     `  --token ${token} \\`,
     `  --server-id ${serverId} \\`,
     '  --binary ./deploycore-agent-linux-amd64 \\',
@@ -212,8 +261,11 @@ export function isMaintenanceMode(server: Server): boolean {
   return server.status === 'maintenance'
 }
 
-/** Synthetic metric series for overview/metrics tabs. */
+/** Metric series only when live utilization samples exist; otherwise empty. */
 export function serverMetricSeries(server: Server, points = 24) {
+  if (server.cpu == null || server.memory == null || server.disk == null) {
+    return [] as Array<{ t: string; cpu: number; memory: number; disk: number }>
+  }
   const baseCpu = server.cpu
   const baseMem = server.memory
   const baseDisk = server.disk

@@ -1,5 +1,7 @@
-import { notFound } from 'next/navigation'
+'use client'
+
 import Link from 'next/link'
+import { useParams, notFound } from 'next/navigation'
 import { Box, HardDrive, Network, Package } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -10,8 +12,8 @@ import { StatusBadge } from '@/components/platform/status-badge'
 import { MaintenanceModeCard } from '@/components/deploycore/servers/maintenance-mode-card'
 import { ServerMetricsChart } from '@/components/deploycore/servers/server-metrics-chart'
 import { ServerAgentPanel, ServerSettingsPanel } from '@/components/deploycore/servers/server-overview'
+import { useServerDetail } from '@/components/deploycore/servers/server-detail-shell'
 import {
-  findServer,
   getServerApplications,
   getServerContainers,
   getServerImages,
@@ -22,22 +24,17 @@ import {
   serverMetricSeries,
   type ServerSectionId,
 } from '@/lib/servers'
-import { servers as rawServers } from '@/lib/mock-data'
-import { getDemoFixtures } from '@/lib/mock-isolation'
-
-const servers = getDemoFixtures(rawServers)
 
 const SECTION_IDS = new Set(SERVER_SECTIONS.map((s) => s.id))
 
-export default async function ServerSectionPage({
-  params,
-}: {
-  params: Promise<{ serverId: string; section: string }>
-}) {
-  const { serverId, section } = await params
-  const server = findServer(serverId, servers)
-  if (!server) notFound()
-  if (!SECTION_IDS.has(section as ServerSectionId) || section === 'overview') notFound()
+export default function ServerSectionPage() {
+  const params = useParams<{ serverId: string; section: string }>()
+  const section = typeof params.section === 'string' ? params.section : params.section?.[0]
+  const { server } = useServerDetail()
+
+  if (!section || !SECTION_IDS.has(section as ServerSectionId) || section === 'overview') {
+    notFound()
+  }
 
   if (section === 'applications') {
     const rows = getServerApplications(server)
@@ -287,7 +284,13 @@ export default async function ServerSectionPage({
           <CardDescription>CPU, memory, and disk utilisation samples.</CardDescription>
         </CardHeader>
         <CardContent>
-          <ServerMetricsChart series={series} />
+          {series.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No live utilisation samples are available for this host yet.
+            </p>
+          ) : (
+            <ServerMetricsChart series={series} />
+          )}
         </CardContent>
       </Card>
     )

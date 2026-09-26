@@ -78,7 +78,7 @@ export function CommandPalette({ open, onOpenChange: setOpen }: CommandPalettePr
                 <CommandItem key={server.id} onClick={() => go(`/servers/${server.id}`)}>
                   <ServerIcon />
                   {server.name}
-                  <span className="ml-auto text-xs text-muted-foreground">{server.region}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">{server.region ?? '—'}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

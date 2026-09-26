@@ -32,9 +32,9 @@ export function ServersFilterTable({ servers }: ServersFilterTableProps) {
       const matchesQuery =
         q === '' ||
         server.name.toLowerCase().includes(q) ||
-        server.ip.toLowerCase().includes(q) ||
-        server.region.toLowerCase().includes(q) ||
-        server.agentVersion.toLowerCase().includes(q)
+        (server.ip?.toLowerCase().includes(q) ?? false) ||
+        (server.region?.toLowerCase().includes(q) ?? false) ||
+        (server.agentVersion?.toLowerCase().includes(q) ?? false)
 
       const matchesProvider = provider === 'all' || server.provider === provider
       const matchesStatus = status === 'all' || server.status === status

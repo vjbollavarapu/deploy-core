@@ -41,11 +41,7 @@ export function ServersPageClient({ servers: fallbackServers }: ServersPageClien
         if (cancelled) return
 
         if (Array.isArray(res?.items)) {
-          const fallbackMap = new Map(fallbackServers.map((s) => [s.name.toLowerCase(), s]))
-          const mapped: Server[] = res.items.map((wire) => {
-            const fb = wire.name ? fallbackMap.get(wire.name.toLowerCase()) : undefined
-            return wireServerToViewModel(wire, fb)
-          })
+          const mapped: Server[] = res.items.map((wire) => wireServerToViewModel(wire))
 
           if (!cancelled) {
             setServerList(mapped)

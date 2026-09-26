@@ -7,6 +7,7 @@ import { ProviderBadge } from '@/components/platform/provider-badge'
 import { ResourceUsageBar } from '@/components/platform/resource-usage-bar'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { getServerCapacity } from '@/lib/dashboard'
+import { displayServerValue, UNAVAILABLE } from '@/lib/servers'
 
 export function ServerCapacity() {
   const servers = getServerCapacity()
@@ -45,26 +46,45 @@ export function ServerCapacity() {
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       <ProviderBadge provider={server.provider} />
-                      <span className="text-xs text-muted-foreground">{server.region}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {displayServerValue(server.region)}
+                      </span>
                       <span className="text-xs text-muted-foreground tabular">
-                        agent {server.agentVersion}
+                        agent {displayServerValue(server.agentVersion)}
                       </span>
                     </div>
                   </div>
                   <div className="grid gap-1.5">
-                    <ResourceUsageBar label="CPU" value={server.cpu} detail={`${server.cpu}%`} size="sm" />
-                    <ResourceUsageBar
-                      label="RAM"
-                      value={server.memory}
-                      detail={`${server.memory}%`}
-                      size="sm"
-                    />
-                    <ResourceUsageBar
-                      label="Disk"
-                      value={server.disk}
-                      detail={`${server.disk}%`}
-                      size="sm"
-                    />
+                    {server.cpu != null ? (
+                      <ResourceUsageBar
+                        label="CPU"
+                        value={server.cpu}
+                        detail={`${server.cpu}%`}
+                        size="sm"
+                      />
+                    ) : (
+                      <p className="text-xs text-muted-foreground">CPU {UNAVAILABLE}</p>
+                    )}
+                    {server.memory != null ? (
+                      <ResourceUsageBar
+                        label="RAM"
+                        value={server.memory}
+                        detail={`${server.memory}%`}
+                        size="sm"
+                      />
+                    ) : (
+                      <p className="text-xs text-muted-foreground">RAM {UNAVAILABLE}</p>
+                    )}
+                    {server.disk != null ? (
+                      <ResourceUsageBar
+                        label="Disk"
+                        value={server.disk}
+                        detail={`${server.disk}%`}
+                        size="sm"
+                      />
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Disk {UNAVAILABLE}</p>
+                    )}
                   </div>
                 </Link>
               </li>

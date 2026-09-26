@@ -128,24 +128,30 @@ export interface Server {
   id: string
   name: string
   provider: string
-  region: string
-  ip: string
-  privateIp: string
-  cpu: number
-  cpuCores: number
-  memory: number
-  memoryTotalGb: number
-  disk: number
-  diskTotalGb: number
-  containers: number
-  agentVersion: string
+  /** Inventory region from Control Plane; null when not reported. */
+  region: string | null
+  /** Public IP from Control Plane; null when not reported. */
+  ip: string | null
+  privateIp: string | null
+  /** Live utilization % — only when Control Plane/agent reports it. */
+  cpu: number | null
+  cpuCores: number | null
+  memory: number | null
+  memoryTotalGb: number | null
+  disk: number | null
+  diskTotalGb: number | null
+  containers: number | null
+  agentVersion: string | null
   status: Status
-  lastHeartbeat: string
-  os: string
-  arch: string
-  dockerVersion: string
-  uptime: string
-  load: [number, number, number]
+  /** Human-readable relative heartbeat; null when never heartbeated. */
+  lastHeartbeat: string | null
+  /** Raw ISO timestamp from API; null means no successful agent heartbeat yet. */
+  lastHeartbeatAt: string | null
+  os: string | null
+  arch: string | null
+  dockerVersion: string | null
+  uptime: string | null
+  load: [number, number, number] | null
 }
 
 export interface DatabaseInstance {

@@ -19,11 +19,11 @@ function average(values: number[]) {
 }
 
 /** Weighted fleet utilisation across online / degraded / maintenance hosts. */
-function fleetAverage(selector: (server: Server) => number) {
+function fleetAverage(selector: (server: Server) => number | null) {
   const servers = getDemoFixtures(mockServers)
   const active = servers.filter((server) => server.status !== 'offline')
   if (active.length === 0) return 0
-  return average(active.map(selector))
+  return average(active.map((s) => selector(s) ?? 0))
 }
 
 /**
@@ -93,7 +93,11 @@ export function getApplicationsRequiringAttention(): Application[] {
 
 export function getServerCapacity(): Server[] {
   const servers = getDemoFixtures(mockServers)
-  return [...servers].sort((a, b) => Math.max(b.cpu, b.memory, b.disk) - Math.max(a.cpu, a.memory, a.disk))
+  return [...servers].sort(
+    (a, b) =>
+      Math.max(b.cpu ?? 0, b.memory ?? 0, b.disk ?? 0) -
+      Math.max(a.cpu ?? 0, a.memory ?? 0, a.disk ?? 0),
+  )
 }
 
 export function getRecentDeployments(limit = 8): Deployment[] {

@@ -201,15 +201,21 @@ export function getFleetMetricSummaries() {
   const serverCpu =
     servers.length === 0
       ? 0
-      : Math.round(servers.reduce((sum, server) => sum + server.cpu, 0) / servers.length)
+      : Math.round(
+          servers.reduce((sum, server) => sum + (server.cpu ?? 0), 0) / servers.length,
+        )
   const serverRam =
     servers.length === 0
       ? 0
-      : Math.round(servers.reduce((sum, server) => sum + server.memory, 0) / servers.length)
+      : Math.round(
+          servers.reduce((sum, server) => sum + (server.memory ?? 0), 0) / servers.length,
+        )
   const storage =
     servers.length === 0
       ? 0
-      : Math.round(servers.reduce((sum, server) => sum + server.disk, 0) / servers.length)
+      : Math.round(
+          servers.reduce((sum, server) => sum + (server.disk ?? 0), 0) / servers.length,
+        )
   const restarts = containers.reduce((sum, c) => sum + c.restarts, 0)
 
   return {
@@ -247,11 +253,11 @@ export function getServerMetricRows() {
   return servers.map((server) => ({
     id: server.id,
     name: server.name,
-    cpu: server.cpu,
-    ram: server.memory,
-    storage: server.disk,
-    uptime: server.uptime,
-    containers: server.containers,
+    cpu: server.cpu ?? 0,
+    ram: server.memory ?? 0,
+    storage: server.disk ?? 0,
+    uptime: server.uptime ?? '—',
+    containers: server.containers ?? 0,
     status: server.status,
     networkAvailable: false,
   }))

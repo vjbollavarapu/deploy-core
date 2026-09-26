@@ -1,19 +1,9 @@
-import { notFound } from 'next/navigation'
+'use client'
+
 import { ServerOverview } from '@/components/deploycore/servers/server-overview'
-import { findServer } from '@/lib/servers'
-import { servers as rawServers } from '@/lib/mock-data'
-import { getDemoFixtures } from '@/lib/mock-isolation'
+import { useServerDetail } from '@/components/deploycore/servers/server-detail-shell'
 
-const servers = getDemoFixtures(rawServers)
-
-export default async function ServerOverviewPage({
-  params,
-}: {
-  params: Promise<{ serverId: string }>
-}) {
-  const { serverId } = await params
-  const server = findServer(serverId, servers)
-  if (!server) notFound()
-
+export default function ServerOverviewPage() {
+  const { server } = useServerDetail()
   return <ServerOverview server={server} />
 }

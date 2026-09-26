@@ -98,7 +98,7 @@ const fallbackProjects: PlacementProject[] = mockProjects.map((p) => ({
 const fallbackServers: PlacementServer[] = mockServers.map((s) => ({
   id: s.id,
   name: s.name,
-  region: s.region,
+  region: s.region ?? undefined,
   status: s.status,
 }))
 
