@@ -65,7 +65,7 @@ else
 fi
 
 # Installer must gate OS/arch and require checksum on remote path
-for needle in 'ID' 'ubuntu' '22.04' '24.04' 'Unsupported system architecture' 'sha256sum' 'Checksum mismatch' 'deploycore-proxy' 'deploycore-traefik'; do
+for needle in 'ID' 'ubuntu' '22.04' '24.04' 'Unsupported system architecture' 'sha256sum' 'Checksum mismatch' 'deploycore-proxy' 'deploycore-traefik' 'traefik:v3.6.16'; do
     if grep -qF "${needle}" "${SCRIPT}"; then
         :
     else

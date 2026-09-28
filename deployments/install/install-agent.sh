@@ -57,6 +57,9 @@ RUN_DIR="/run/deploycore-agent"
 TRAEFIK_DATA_DIR="${DATA_DIR}/traefik"
 PROXY_NETWORK="deploycore-proxy"
 TRAEFIK_CONTAINER="deploycore-traefik"
+# Pinned: Traefik v3.3's Docker client (API 1.24) cannot talk to Docker 29+
+# (minimum API 1.40). v3.6.16 was verified against Docker 29.8.0 on OCI.
+TRAEFIK_IMAGE="traefik:v3.6.16"
 ARTIFACT_PREFIX="deploycore-agent-linux"
 
 # Parse Command Line Arguments
@@ -478,7 +481,7 @@ ensure_traefik() {
         --label "deploycore.managed=true"
         --label "deploycore.protected=true"
         --label "deploycore.service_type=edge"
-        "traefik:v3.3"
+        "${TRAEFIK_IMAGE}"
         --providers.docker=true
         --providers.docker.exposedbydefault=false
         --providers.docker.network="${PROXY_NETWORK}"
