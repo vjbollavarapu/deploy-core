@@ -14,12 +14,21 @@ export type Status =
 
 export type StatusTone = 'success' | 'warning' | 'critical' | 'info' | 'inactive'
 
+/** Control Plane environment identity used for detail navigation. */
+export interface ProjectEnvironmentRef {
+  id: string
+  name: string
+  slug: string
+}
+
 export interface Project {
   id: string
   name: string
   slug: string
   description?: string
   environments: string[]
+  /** Present when environments were loaded from the Control Plane. */
+  environmentRefs?: ProjectEnvironmentRef[]
   applicationCount: number
   health: Status
   lastDeployment: string

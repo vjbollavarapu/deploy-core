@@ -11,7 +11,7 @@ import { EmptyState } from '@/components/platform/empty-state'
 import { EnvironmentBadge } from '@/components/platform/environment-badge'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { apiClient, ApiError } from '@/lib/api'
-import { environmentSlug } from '@/lib/projects'
+import { environmentDetailPath, environmentRefFor, environmentSlug } from '@/lib/projects'
 import type { Application, Project, Status } from '@/lib/types'
 import { EnvironmentFormDialog } from './environment-form-dialog'
 
@@ -66,7 +66,7 @@ export function ProjectEnvironmentsPanel({
               <CardHeader>
                 <CardTitle className="flex items-center justify-between gap-2">
                   <Link
-                    href={`/projects/${project.slug}/environments/${environmentSlug(env)}`}
+                    href={environmentDetailPath(project, env)}
                     className="hover:underline"
                   >
                     <EnvironmentBadge environment={env} />
@@ -98,9 +98,7 @@ export function ProjectEnvironmentsPanel({
                     variant="outline"
                     nativeButton={false}
                     render={
-                      <Link
-                        href={`/projects/${project.slug}/environments/${environmentSlug(env)}`}
-                      />
+                      <Link href={environmentDetailPath(project, env)} />
                     }
                   >
                     Open
@@ -124,7 +122,9 @@ export function ProjectEnvironmentsPanel({
                         return
                       }
                       try {
-                        await apiClient.delete(`/environments/${env}`)
+                        await apiClient.delete(
+                          `/environments/${environmentRefFor(project, env)?.id ?? env}`,
+                        )
                         toast.success(`${env} environment deleted`)
                         onEnvironmentDeleted?.(env)
                       } catch (err) {

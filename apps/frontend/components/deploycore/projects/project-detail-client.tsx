@@ -42,6 +42,7 @@ interface ProjectDetailClientProps {
     secrets: SecretItem[]
   }
   environmentHealth: Record<string, Status>
+  onRefresh?: () => void
 }
 
 export function ProjectDetailClient({
@@ -50,6 +51,7 @@ export function ProjectDetailClient({
   deployments,
   resources,
   environmentHealth,
+  onRefresh,
 }: ProjectDetailClientProps) {
   const [envDialogOpen, setEnvDialogOpen] = useState(false)
 
@@ -113,6 +115,8 @@ export function ProjectDetailClient({
             project={project}
             applications={applications}
             environmentHealth={environmentHealth}
+            onEnvironmentCreated={onRefresh}
+            onEnvironmentDeleted={onRefresh}
           />
         </TabsContent>
 
@@ -171,6 +175,7 @@ export function ProjectDetailClient({
             name={project.name}
             slug={project.slug}
             description={project.description}
+            onUpdated={onRefresh}
           />
         </TabsContent>
       </Tabs>
@@ -181,6 +186,7 @@ export function ProjectDetailClient({
         projectName={project.name}
         projectId={project.id}
         existingNames={project.environments}
+        onSuccess={() => onRefresh?.()}
       />
     </PageContainer>
   )

@@ -68,7 +68,7 @@ export function EnvironmentDetailClient({
         description={`${project.name} · environment inventory and health`}
         breadcrumbs={[
           { label: 'Projects', href: '/projects' },
-          { label: project.name, href: `/projects/${project.slug}` },
+          { label: project.name, href: `/projects/${project.id}` },
           { label: environment },
         ]}
         badges={
@@ -112,14 +112,14 @@ export function EnvironmentDetailClient({
                 try {
                   await apiClient.delete(`/environments/${environmentId || environment}`)
                   toast.success(`Environment “${environment}” deleted`)
-                  router.push(`/projects/${project.slug}`)
+                  router.push(`/projects/${project.id}`)
                 } catch (err) {
                   if (err instanceof ApiError) {
                     toast.error(err.message)
                     return
                   }
                   toast.success(`Environment “${environment}” removed`)
-                  router.push(`/projects/${project.slug}`)
+                  router.push(`/projects/${project.id}`)
                 }
               }}
             />

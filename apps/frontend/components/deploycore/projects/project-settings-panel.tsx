@@ -92,8 +92,8 @@ export function ProjectSettingsPanel({
         project={{ id, name, slug, description }}
         onSuccess={(values) => {
           onUpdated?.(values)
-          if (values.slug !== slug) {
-            router.push(`/projects/${values.slug}`)
+          if (id) {
+            router.push(`/projects/${id}`)
           }
         }}
       />

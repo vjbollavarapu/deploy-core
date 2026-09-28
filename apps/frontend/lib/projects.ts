@@ -1,3 +1,17 @@
+import type { WireEnvironment, WireProject } from '@/lib/api'
+import type {
+  Application,
+  DatabaseInstance,
+  Deployment,
+  DockerNetwork,
+  DomainRecord,
+  EnvVarEntry,
+  Project,
+  ProjectEnvironmentRef,
+  SecretItem,
+  Status,
+  Volume,
+} from '@/lib/types'
 import {
   applications as rawApplications,
   databases as rawDatabases,
@@ -20,16 +34,65 @@ const networks = getDemoFixtures(rawNetworks)
 const projects = getDemoFixtures(rawProjects)
 const secrets = getDemoFixtures(rawSecrets)
 const volumes = getDemoFixtures(rawVolumes)
-import type {
-  Application,
-  DatabaseInstance,
-  Deployment,
-  DomainRecord,
-  EnvVarEntry,
-  Project,
-  SecretItem,
-  Status,
-} from '@/lib/types'
+
+export function projectDetailPath(project: Pick<Project, 'id'>): string {
+  return `/projects/${project.id}`
+}
+
+export function environmentRefFor(
+  project: Project,
+  environmentName: string,
+): ProjectEnvironmentRef | undefined {
+  return project.environmentRefs?.find(
+    (env) =>
+      env.id === environmentName ||
+      env.name === environmentName ||
+      env.slug === environmentName ||
+      env.slug === environmentSlug(environmentName),
+  )
+}
+
+export function environmentDetailPath(project: Project, environmentName: string): string {
+  const ref = environmentRefFor(project, environmentName)
+  const segment = ref?.id ?? environmentSlug(environmentName)
+  return `/projects/${project.id}/environments/${segment}`
+}
+
+export function wireProjectToViewModel(
+  wire: WireProject,
+  environments: WireEnvironment[] = [],
+): Project {
+  const refs: ProjectEnvironmentRef[] = []
+  for (const env of environments) {
+    if (!env.id) continue
+    const name = env.name || env.slug || env.id
+    const slug = env.slug || name.toLowerCase()
+    refs.push({ id: env.id, name, slug })
+  }
+  return {
+    id: wire.id || '',
+    name: wire.name || 'Untitled',
+    slug: wire.slug || '',
+    description: wire.description,
+    environments: refs.map((env) => env.name),
+    environmentRefs: refs,
+    applicationCount: 0,
+    health: 'unknown',
+    lastDeployment: '—',
+    owner: { name: '—' },
+    updatedAt: wire.updatedAt ? new Date(wire.updatedAt).toLocaleDateString() : '—',
+  }
+}
+
+export function emptyProjectResources() {
+  return {
+    databases: [] as DatabaseInstance[],
+    volumes: [] as Volume[],
+    networks: [] as DockerNetwork[],
+    domains: [] as DomainRecord[],
+    secrets: [] as SecretItem[],
+  }
+}
 
 export function findProject(projectId: string, list: Project[] = projects): Project | undefined {
   const found = list.find((p) => p.slug === projectId || p.id === projectId)

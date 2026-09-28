@@ -37,7 +37,7 @@ export default async function ApplicationLayout({
         breadcrumbs={[
           { label: 'Applications', href: '/applications' },
           ...(project
-            ? [{ label: project.name, href: `/projects/${project.slug}` }]
+            ? [{ label: project.name, href: `/projects/${project.id}` }]
             : [{ label: application.project }]),
           { label: application.name },
         ]}

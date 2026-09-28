@@ -17,7 +17,7 @@ function initials(name: string) {
 export function ProjectCard({ project }: { project: Project }) {
   return (
     <Link
-      href={`/projects/${project.slug}`}
+      href={`/projects/${project.id}`}
       className="flex flex-col gap-4 rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/40 hover:bg-muted/20"
     >
       <div className="flex items-start justify-between gap-2">

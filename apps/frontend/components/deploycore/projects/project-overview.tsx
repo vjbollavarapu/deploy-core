@@ -6,7 +6,7 @@ import { DetailList } from '@/components/platform/detail-list'
 import { EnvironmentBadge } from '@/components/platform/environment-badge'
 import type { Application, Project, Status } from '@/lib/types'
 import Link from 'next/link'
-import { environmentSlug } from '@/lib/projects'
+import { environmentDetailPath } from '@/lib/projects'
 
 interface ProjectOverviewProps {
   project: Project
@@ -48,7 +48,7 @@ export function ProjectOverview({
               project.environments.map((env) => (
                 <Link
                   key={env}
-                  href={`/projects/${project.slug}/environments/${environmentSlug(env)}`}
+                  href={environmentDetailPath(project, env)}
                   className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40"
                 >
                   <EnvironmentBadge environment={env} />

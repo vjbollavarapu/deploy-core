@@ -91,7 +91,7 @@ export function ProjectsTable({ projects, actions, onCreated }: ProjectsTablePro
             {filtered.map((project) => (
               <TableRow key={project.id}>
                 <TableCell>
-                  <Link href={`/projects/${project.slug}`} className="flex flex-col gap-0.5 hover:underline">
+                  <Link href={`/projects/${project.id}`} className="flex flex-col gap-0.5 hover:underline">
                     <span className="font-medium text-foreground">{project.name}</span>
                     <span className="font-mono text-xs text-muted-foreground">{project.slug}</span>
                   </Link>

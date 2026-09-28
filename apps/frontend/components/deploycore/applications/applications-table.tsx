@@ -24,7 +24,7 @@ interface ApplicationsTableProps {
 
 function projectHref(projectId: string, projectName: string) {
   const project = projects.find((p) => p.id === projectId || p.name === projectName)
-  return project ? `/projects/${project.slug}` : '/projects'
+  return project ? `/projects/${project.id}` : '/projects'
 }
 
 export function ApplicationsTable({
