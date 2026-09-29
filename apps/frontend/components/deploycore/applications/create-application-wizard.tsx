@@ -38,6 +38,7 @@ import {
   type PlacementServer,
 } from './wizard/step-placement'
 import { StepDeploy, StepReview } from './wizard/step-review'
+import { StepStorage } from './wizard/step-storage'
 import {
   apiClient,
   ApiError,
@@ -52,12 +53,23 @@ import { useOrganization } from '@/lib/auth-context'
 import { isDemoModeEnabled } from '@/lib/mock-isolation'
 import {
   CreateFlowError,
+  clearCreateApplicationResume,
   createApplicationWithVariables,
   creationMode,
+  readCreateApplicationResume,
+  writeCreateApplicationResume,
+  type SavedVolume,
 } from '@/lib/applications/create-application-flow'
 
+const STORAGE_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'storage')
 const REVIEW_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'review')
 const DEPLOY_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'deploy')
+
+type SavedApplication = {
+  id: string
+  savedKeys: string[]
+  savedVolumes: SavedVolume[]
+}
 
 const isUUID = (str?: string): boolean =>
   Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str))
@@ -138,7 +150,7 @@ export function CreateApplicationWizard({
   const [step, setStep] = useState(0)
   const [serverError, setServerError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
-  const [savedApplication, setSavedApplication] = useState<{ id: string; savedKeys: string[] } | null>(null)
+  const [savedApplication, setSavedApplication] = useState<SavedApplication | null>(null)
 
   const [projectsList, setProjectsList] = useState<PlacementProject[]>(fallbackProjects)
   const [serversList, setServersList] = useState<PlacementServer[]>(fallbackServers)
@@ -251,12 +263,20 @@ export function CreateApplicationWizard({
   function handleOpenChange(next: boolean) {
     setOpen(next)
     if (next) {
+      const stored = readCreateApplicationResume()
+      if (stored) {
+        setSavedApplication({
+          id: stored.applicationId,
+          savedKeys: stored.savedKeys,
+          savedVolumes: stored.savedVolumes,
+        })
+        setValue('volumes', stored.volumes)
+      }
       setIsLoadingPlacement(true)
     } else {
       setStep(0)
       setServerError(null)
       setPending(false)
-      setSavedApplication(null)
       reset({
         ...DEFAULT_APPLICATION_VALUES,
         ...(defaultProjectId ? { projectId: defaultProjectId } : {}),
@@ -370,12 +390,19 @@ export function CreateApplicationWizard({
 
         await createApplicationWithVariables(apiClient, {
           organizationId: activeOrg.id,
+          serverId: data.serverId,
           applicationBody: appPayload,
           envVars: data.envVars,
+          volumes: data.volumes.map((volume) => ({
+            name: volume.name,
+            mountPath: volume.mountPath,
+            readOnly: !volume.writable,
+          })),
           resume: savedApplication
             ? {
                 applicationId: savedApplication.id,
                 savedKeys: savedApplication.savedKeys,
+                savedVolumes: savedApplication.savedVolumes,
               }
             : undefined,
         })
@@ -384,13 +411,28 @@ export function CreateApplicationWizard({
       }
 
       toast.success(`Application “${data.name}” created and deployment queued`)
+      clearCreateApplicationResume()
+      setSavedApplication(null)
       onSuccess?.()
       handleOpenChange(false)
     } catch (err) {
       if (err instanceof CreateFlowError && err.applicationId) {
-        setSavedApplication({
+        const next = {
           id: err.applicationId,
           savedKeys: err.savedKeys,
+          savedVolumes: err.savedVolumes,
+        }
+        setSavedApplication(next)
+        const currentVolumes = getValues('volumes') ?? []
+        writeCreateApplicationResume({
+          applicationId: next.id,
+          savedKeys: next.savedKeys,
+          savedVolumes: next.savedVolumes,
+          volumes: currentVolumes.map((volume) => ({
+            name: volume.name.trim(),
+            mountPath: volume.mountPath.trim(),
+            writable: volume.writable,
+          })),
         })
       }
       const message =
@@ -424,11 +466,11 @@ export function CreateApplicationWizard({
           }
         />
       )}
-      <DialogContent className="flex max-h-[90vh] flex-col gap-4 overflow-hidden sm:max-w-xl">
+      <DialogContent className="flex max-h-[90vh] flex-col gap-4 overflow-hidden sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Create application</DialogTitle>
           <DialogDescription>
-            Configure source, runtime, networking, and placement. Nothing is submitted until Deploy.
+            Configure source, runtime, networking, placement, and optional storage. Nothing is submitted until Deploy.
           </DialogDescription>
         </DialogHeader>
 
@@ -457,6 +499,15 @@ export function CreateApplicationWizard({
             />
           )}
           {step === 4 && <StepNetworking register={register} errors={errors} />}
+          {step === STORAGE_STEP && (
+            <StepStorage
+              register={register}
+              control={control}
+              watch={watch}
+              errors={errors}
+              lockedNames={(savedApplication?.savedVolumes ?? []).map((volume) => volume.name)}
+            />
+          )}
           {step === 5 && (
             <StepPlacement
               register={register}

@@ -49,6 +49,8 @@ type attachRequest struct {
 	ResourceType string `json:"resourceType"`
 	ResourceID   string `json:"resourceId"`
 	MountPath    string `json:"mountPath"`
+	ReadOnly     *bool  `json:"readOnly"`
+	ContainerID  string `json:"containerId"`
 }
 
 type updateRequest struct {
@@ -224,6 +226,8 @@ func (h *Handler) Attach(w http.ResponseWriter, r *http.Request) {
 		ResourceType: req.ResourceType,
 		ResourceID:   resID,
 		MountPath:    req.MountPath,
+		ReadOnly:     req.ReadOnly,
+		ContainerID:  req.ContainerID,
 	}, auditMeta(r))
 	if err != nil {
 		writeErr(w, r, err)

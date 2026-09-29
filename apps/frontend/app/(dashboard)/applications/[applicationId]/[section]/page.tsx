@@ -3,14 +3,12 @@ import {
   GitBranch,
   GitCommitVertical,
   Globe,
-  HardDrive,
   KeyRound,
   Network,
 } from 'lucide-react'
 import { DetailList } from '@/components/platform/detail-list'
 import { EmptyState } from '@/components/platform/empty-state'
 import { BuildLogViewer } from '@/components/platform/build-log-viewer'
-import { StatusBadge } from '@/components/platform/status-badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table,
@@ -21,6 +19,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { ApplicationLogsPanel } from '@/components/deploycore/applications/application-logs-panel'
+import { ApplicationVolumesPanel } from '@/components/deploycore/applications/application-volumes-panel'
 import { ApplicationMetricsPanel } from '@/components/deploycore/applications/application-metrics'
 import { ApplicationSettingsPanel } from '@/components/deploycore/applications/application-settings-panel'
 import { DeploymentsTable } from '@/components/deploycore/deployments/deployments-table'
@@ -36,7 +35,6 @@ import {
   getApplicationRevisions,
   getApplicationSecrets,
   getApplicationVariables,
-  getApplicationVolumes,
 } from '@/lib/applications'
 
 export default async function ApplicationSectionPage({
@@ -45,6 +43,9 @@ export default async function ApplicationSectionPage({
   params: Promise<{ applicationId: string; section: string }>
 }) {
   const { applicationId, section } = await params
+  if (section === 'volumes') {
+    return <ApplicationVolumesPanel applicationId={applicationId} />
+  }
   const application = findApplication(applicationId)
   if (!application) notFound()
 
@@ -215,59 +216,6 @@ export default async function ApplicationSectionPage({
                       <TableCell className="text-muted-foreground">{network.scope}</TableCell>
                       <TableCell className="text-muted-foreground">
                         {network.connectedServices.join(', ') || '—'}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    )
-  }
-
-  if (section === 'volumes') {
-    const rows = getApplicationVolumes(application)
-    return (
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle>Volumes</CardTitle>
-          <CardDescription>Persistent volumes attached to this application.</CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {rows.length === 0 ? (
-            <div className="p-4">
-              <EmptyState
-                icon={HardDrive}
-                title="No volumes"
-                description="Persistent volumes attached to this application will appear here."
-                className="border-0"
-              />
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Volume</TableHead>
-                    <TableHead>Mount</TableHead>
-                    <TableHead>Usage</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((volume) => (
-                    <TableRow key={volume.id}>
-                      <TableCell className="font-medium">{volume.name}</TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {volume.mountPath}
-                      </TableCell>
-                      <TableCell className="tabular text-muted-foreground">
-                        {volume.usedGb}/{volume.totalGb} GB
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={volume.status} />
                       </TableCell>
                     </TableRow>
                   ))}

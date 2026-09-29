@@ -7,6 +7,8 @@ import {
   healthCheckRequest,
   healthCheckSummary,
   networkingStepSchema,
+  storageStepSchema,
+  storageSummary,
 } from './application'
 
 const redisPlacement = {
@@ -71,5 +73,33 @@ describe('wizard health check path', () => {
       healthCheckPath: '/healthz',
     })
     assert.equal(created.success, true, JSON.stringify(created.error?.issues))
+  })
+})
+
+describe('wizard storage', () => {
+  it('accepts no volumes and a writable redis-data mount', () => {
+    const empty = storageStepSchema.safeParse({ volumes: [] })
+    assert.equal(empty.success, true)
+    assert.equal(storageSummary([]), 'None')
+
+    const storage = storageStepSchema.safeParse({
+      volumes: [{ name: 'redis-data', mountPath: '/data', writable: true }],
+    })
+    assert.equal(storage.success, true)
+    assert.equal(storageSummary([{ name: 'redis-data', mountPath: '/data', writable: true }]), 'redis-data → /data → Writable')
+
+    const created = createApplicationSchema.safeParse({
+      ...redisPlacement,
+      healthCheckPath: '',
+      volumes: [{ name: 'redis-data', mountPath: '/data', writable: true }],
+    })
+    assert.equal(created.success, true, JSON.stringify(created.error?.issues))
+  })
+
+  it('rejects a relative mount path', () => {
+    const storage = storageStepSchema.safeParse({
+      volumes: [{ name: 'redis-data', mountPath: 'data', writable: false }],
+    })
+    assert.equal(storage.success, false)
   })
 })

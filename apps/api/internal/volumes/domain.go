@@ -61,6 +61,12 @@ type AttachInput struct {
 	ResourceType string
 	ResourceID   uuid.UUID
 	MountPath    string
+	// ReadOnly is stored on labels.readOnly. Nil leaves existing labels unchanged.
+	ReadOnly *bool
+	// ContainerID queues an agent ATTACH_VOLUME for a container that already exists.
+	// A pre-deployment application attachment omits it. The Docker mount is applied
+	// later from the revision snapshot when the container is created.
+	ContainerID string
 }
 
 type UpdateInput struct {

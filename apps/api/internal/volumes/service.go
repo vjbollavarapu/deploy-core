@@ -203,9 +203,6 @@ func (s *Service) Attach(ctx context.Context, actorID, id uuid.UUID, in AttachIn
 	if err := s.authz.RequirePermission(ctx, actorID, v.OrganizationID, rbac.ServerUpdate); err != nil {
 		return Volume{}, err
 	}
-	if v.State == StateAttached && v.AttachedResourceID != nil {
-		return Volume{}, apierror.ConflictCode(apierror.CodeVolumeInUse, "volume is already attached")
-	}
 	rt := strings.ToLower(strings.TrimSpace(in.ResourceType))
 	switch rt {
 	case ResourceDatabase:
@@ -231,22 +228,51 @@ func (s *Service) Attach(ctx context.Context, actorID, id uuid.UUID, in AttachIn
 	if err := security.ValidateContainerMountPath(mount); err != nil {
 		return Volume{}, apierror.Validation(err.Error(), map[string]any{"mountPath": err.Error()})
 	}
-	cmd, err := s.issue(ctx, v, protocol.OpAttachVolume, map[string]any{
-		"volumeId":     v.ID.String(),
-		"name":         v.Name,
-		"resourceType": rt,
-		"resourceId":   in.ResourceID.String(),
-		"mountPath":    mount,
-	}, &actorID)
-	if err != nil {
-		return Volume{}, err
+	if v.AttachedResourceID != nil && v.AttachedResourceType != nil {
+		same := strings.EqualFold(*v.AttachedResourceType, rt) && *v.AttachedResourceID == in.ResourceID
+		if !same {
+			return Volume{}, apierror.ConflictCode(apierror.CodeVolumeInUse, "volume is already attached")
+		}
 	}
-	v, err = s.repo.SetAttachment(ctx, v.ID, &rt, &in.ResourceID, mount, StateAttached, &cmd.ID)
+	if in.ReadOnly != nil {
+		if v.Labels == nil {
+			v.Labels = map[string]any{}
+		}
+		v.Labels["readOnly"] = *in.ReadOnly
+		v.Labels["deploycore.managed"] = "true"
+		v.Labels["deploycore.owner"] = "platform"
+		v.Labels["deploycore.organization_id"] = v.OrganizationID.String()
+		v.MountPath = mount
+		updated, err := s.repo.Update(ctx, v)
+		if err != nil {
+			return Volume{}, err
+		}
+		v = updated
+	}
+
+	containerID := strings.TrimSpace(in.ContainerID)
+	var commandID *uuid.UUID
+	if containerID != "" {
+		cmd, err := s.issue(ctx, v, protocol.OpAttachVolume, map[string]any{
+			"volumeId":     v.ID.String(),
+			"name":         v.Name,
+			"resourceType": rt,
+			"resourceId":   in.ResourceID.String(),
+			"mountPath":    mount,
+			"containerId":  containerID,
+			"readOnly":     v.Labels["readOnly"] == true,
+		}, &actorID)
+		if err != nil {
+			return Volume{}, err
+		}
+		commandID = &cmd.ID
+	}
+	v, err = s.repo.SetAttachment(ctx, v.ID, &rt, &in.ResourceID, mount, StateAttached, commandID)
 	if err != nil {
 		return Volume{}, err
 	}
 	s.writeAudit(ctx, &v.OrganizationID, &actorID, "volume.attach", "volume", v.ID.String(), meta,
-		nil, map[string]any{"resourceType": rt, "resourceId": in.ResourceID.String(), "mountPath": mount},
+		nil, map[string]any{"resourceType": rt, "resourceId": in.ResourceID.String(), "mountPath": mount, "containerId": containerID},
 	)
 	return v, nil
 }

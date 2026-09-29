@@ -129,6 +129,56 @@ export const placementStepSchema = z.object({
   serverId: z.string().min(1, 'Select a target server'),
 })
 
+const volumeNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/
+const volumeMountPattern = /^(\/[A-Za-z0-9._-]+)+$/
+
+export const applicationVolumeSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Volume name is required')
+    .max(128)
+    .regex(volumeNamePattern, 'Use letters, numbers, dots, underscores, or hyphens'),
+  mountPath: z
+    .string()
+    .trim()
+    .min(1, 'Mount path is required')
+    .regex(volumeMountPattern, 'Use an absolute path such as /data'),
+  writable: z.boolean(),
+})
+
+const applicationVolumesField = z.array(applicationVolumeSchema).superRefine((volumes, ctx) => {
+  const names = new Set<string>()
+  const paths = new Set<string>()
+  volumes.forEach((volume, index) => {
+    const name = volume.name.toLowerCase()
+    if (names.has(name)) {
+      ctx.addIssue({ code: 'custom', path: [index, 'name'], message: 'Volume name must be unique' })
+    }
+    if (paths.has(volume.mountPath)) {
+      ctx.addIssue({ code: 'custom', path: [index, 'mountPath'], message: 'Mount path must be unique' })
+    }
+    names.add(name)
+    paths.add(volume.mountPath)
+  })
+})
+
+export const storageStepSchema = z.object({
+  volumes: applicationVolumesField,
+})
+
+export function storageSummary(
+  volumes: Array<{ name: string; mountPath: string; writable: boolean }>,
+): string {
+  if (volumes.length === 0) return 'None'
+  return volumes
+    .map(
+      (volume) =>
+        `${volume.name.trim()} → ${volume.mountPath.trim()} → ${volume.writable ? 'Writable' : 'Read-only'}`,
+    )
+    .join(', ')
+}
+
 export const createApplicationSchema = z
   .object({
     sourceType: z.enum(SOURCE_TYPES),
@@ -164,6 +214,7 @@ export const createApplicationSchema = z
     projectId: z.string().min(1),
     environment: z.string().min(1),
     serverId: z.string().min(1),
+    volumes: applicationVolumesField,
   })
   .superRefine((values, ctx) => {
     const sourceResult = sourceConfigStepSchema.safeParse(values)
@@ -187,6 +238,7 @@ export const WIZARD_STEPS = [
   { id: 'configuration', label: 'Configuration', schema: configurationStepSchema },
   { id: 'networking', label: 'Networking', schema: networkingStepSchema },
   { id: 'placement', label: 'Placement', schema: placementStepSchema },
+  { id: 'storage', label: 'Storage', schema: storageStepSchema },
   { id: 'review', label: 'Review' },
   { id: 'deploy', label: 'Deploy' },
 ] as const
@@ -216,6 +268,7 @@ export const DEFAULT_APPLICATION_VALUES: CreateApplicationValues = {
   projectId: '',
   environment: '',
   serverId: '',
+  volumes: [],
 }
 
 /** Blank path disables HTTP health checks. A configured path is sent unchanged. */

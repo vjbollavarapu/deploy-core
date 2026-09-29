@@ -11,7 +11,7 @@ interface WizardStepperProps {
 
 export function WizardStepper({ step, onStepClick }: WizardStepperProps) {
   return (
-    <ol className="grid grid-cols-4 gap-2 sm:grid-cols-8" aria-label="Wizard progress">
+    <ol className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-9" aria-label="Wizard progress">
       {WIZARD_STEPS.map((item, index) => {
         const complete = index < step
         const current = index === step

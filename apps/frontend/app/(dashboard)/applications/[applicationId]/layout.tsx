@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
 import { GitBranch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ApplicationRedeployButton } from '@/components/deploycore/applications/application-redeploy-button'
@@ -24,7 +23,14 @@ export default async function ApplicationLayout({
 }) {
   const { applicationId } = await params
   const application = findApplication(applicationId)
-  if (!application) notFound()
+  if (!application) {
+    return (
+      <PageContainer density="wide">
+        <ApplicationSubnav applicationId={applicationId} />
+        {children}
+      </PageContainer>
+    )
+  }
 
   const project = projects.find((p) => p.id === application.projectId)
   const primaryDomain = getPrimaryDomain(application)

@@ -10,6 +10,7 @@ const mockServers = getDemoFixtures(rawMockServers)
 import {
   healthCheckSummary,
   sourceTypeLabel,
+  storageSummary,
   type CreateApplicationValues,
 } from '@/lib/validations/application'
 import type { PlacementProject, PlacementServer } from './step-placement'
@@ -125,6 +126,7 @@ export function StepReview({ values, projects = [], servers = [] }: StepReviewPr
             label="Secrets"
             value="Included from existing scopes. Secret values are not entered here."
           />
+          <SummaryRow label="Storage" value={storageSummary(values.volumes)} />
         </CardContent>
       </Card>
     </div>
@@ -190,6 +192,10 @@ export function StepDeploy({ values, pending, projects = [], servers = [] }: Ste
             </span>
           </div>
           <div className="flex items-center justify-between py-1 border-b border-border/50">
+            <span className="text-muted-foreground">Storage</span>
+            <span className="text-right text-foreground">{storageSummary(values.volumes)}</span>
+          </div>
+          <div className="flex items-center justify-between py-1 border-b border-border/50">
             <span className="text-muted-foreground">Networking</span>
             <span className="text-foreground">
               Port {values.port}
@@ -216,8 +222,8 @@ export function StepDeploy({ values, pending, projects = [], servers = [] }: Ste
           </p>
           <p className="text-xs text-muted-foreground">
             {pending
-              ? 'Creating the application, saving environment variables, then queueing the deployment.'
-              : 'Clicking “Deploy” saves the application and its environment variables, then queues the deployment.'}
+              ? 'Creating the application, saving environment variables, attaching storage, then queueing the deployment.'
+              : 'Clicking “Deploy” saves the application and its environment variables, attaches any storage, then queues the deployment.'}
           </p>
         </div>
       </div>

@@ -14,6 +14,8 @@ import (
 
 	"github.com/deploycore/deploy-core/apps/api/internal/auth"
 	"github.com/deploycore/deploy-core/apps/api/internal/config"
+	"github.com/deploycore/deploy-core/apps/api/internal/deployments"
+	"github.com/deploycore/deploy-core/apps/api/internal/orchestrator"
 	"github.com/deploycore/deploy-core/apps/api/internal/platform/db"
 	"github.com/deploycore/deploy-core/apps/api/internal/rbac"
 	"github.com/deploycore/deploy-core/apps/api/internal/server"
@@ -221,6 +223,197 @@ func TestDatabaseCriticalVolumeProtected(t *testing.T) {
 	del := doJSON(t, srv, http.MethodDelete, "/api/v1/volumes/"+body.Items[0].ID, nil, ownerTok)
 	if del.Code != http.StatusConflict {
 		t.Fatalf("expected protected conflict, got %d %s", del.Code, del.Body.String())
+	}
+}
+
+func TestPreDeploymentApplicationVolumeSnapshotsRevision(t *testing.T) {
+	pool := testPool(t)
+	srv := testServer(t, pool)
+	ctx := context.Background()
+
+	ownerTok := register(t, srv, "owner-volsnap-"+uuid.NewString()+"@example.com", "password123", "Owner")
+	orgID := createOrg(t, srv, ownerTok, "Modulyn", "modulyn-"+uuid.NewString()[:8])
+	projectID := createProject(t, srv, ownerTok, orgID)
+	envID := createEnvironment(t, srv, ownerTok, projectID)
+	serverID := createServer(t, srv, ownerTok, orgID)
+	agentCred := registerAgent(t, srv, ownerTok, serverID)
+
+	appRec := doJSON(t, srv, http.MethodPost, "/api/v1/applications", mustJSON(map[string]any{
+		"organizationId": orgID, "projectId": projectID, "environmentId": envID,
+		"name": "redis", "slug": "redis-" + uuid.NewString()[:8], "type": "DOCKER_IMAGE",
+		"targetServerId": serverID,
+		"config": map[string]any{
+			"sourceType": "image", "imageReference": "redis:7-alpine", "internalPort": 6379,
+			"healthCheck": map[string]any{"enabled": false},
+		},
+	}), ownerTok)
+	if appRec.Code != http.StatusCreated {
+		t.Fatalf("app status=%d body=%s", appRec.Code, appRec.Body.String())
+	}
+	var appOut struct {
+		Application struct {
+			ID string `json:"id"`
+		} `json:"application"`
+	}
+	decode(t, appRec, &appOut)
+	appID := appOut.Application.ID
+
+	create := doJSON(t, srv, http.MethodPost, "/api/v1/volumes", mustJSON(map[string]any{
+		"organizationId": orgID, "serverId": serverID, "name": "redis-data", "mountPath": "/data",
+		"labels": map[string]any{"readOnly": false},
+	}), ownerTok)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("volume status=%d body=%s", create.Code, create.Body.String())
+	}
+	var created struct {
+		Volume struct {
+			ID            string  `json:"id"`
+			LastCommandID *string `json:"lastCommandId"`
+		} `json:"volume"`
+	}
+	decode(t, create, &created)
+	if created.Volume.LastCommandID == nil {
+		t.Fatal("expected create command")
+	}
+	done := doJSON(t, srv, http.MethodPost, "/api/v1/agents/commands/"+*created.Volume.LastCommandID+"/status",
+		mustJSON(map[string]any{"status": "completed", "result": map[string]any{"dockerName": "redis-data"}}), agentCred)
+	if done.Code != http.StatusOK {
+		t.Fatalf("complete status=%d body=%s", done.Code, done.Body.String())
+	}
+
+	attach := doJSON(t, srv, http.MethodPost, "/api/v1/volumes/"+created.Volume.ID+"/attach", mustJSON(map[string]any{
+		"resourceType": "application", "resourceId": appID, "mountPath": "/data", "readOnly": false,
+	}), ownerTok)
+	if attach.Code != http.StatusOK {
+		t.Fatalf("attach status=%d body=%s", attach.Code, attach.Body.String())
+	}
+	var attached struct {
+		Volume struct {
+			State  string         `json:"state"`
+			Labels map[string]any `json:"labels"`
+		} `json:"volume"`
+	}
+	decode(t, attach, &attached)
+	if attached.Volume.State != volumes.StateAttached {
+		t.Fatalf("attached state=%s", attached.Volume.State)
+	}
+	if attached.Volume.Labels["readOnly"] != false {
+		t.Fatalf("labels=%v", attached.Volume.Labels)
+	}
+	var attachCommands int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM agent_commands WHERE operation = 'ATTACH_VOLUME' AND server_id = $1`, serverID).Scan(&attachCommands); err != nil {
+		t.Fatal(err)
+	}
+	if attachCommands != 0 {
+		t.Fatalf("pre-deployment attach queued %d ATTACH_VOLUME commands", attachCommands)
+	}
+
+	again := doJSON(t, srv, http.MethodPost, "/api/v1/volumes/"+created.Volume.ID+"/attach", mustJSON(map[string]any{
+		"resourceType": "application", "resourceId": appID, "mountPath": "/data", "readOnly": false,
+	}), ownerTok)
+	if again.Code != http.StatusOK {
+		t.Fatalf("idempotent attach status=%d body=%s", again.Code, again.Body.String())
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM agent_commands WHERE operation = 'ATTACH_VOLUME' AND server_id = $1`, serverID).Scan(&attachCommands); err != nil {
+		t.Fatal(err)
+	}
+	if attachCommands != 0 {
+		t.Fatalf("idempotent attach queued ATTACH_VOLUME")
+	}
+
+	live := doJSON(t, srv, http.MethodPost, "/api/v1/volumes/"+created.Volume.ID+"/attach", mustJSON(map[string]any{
+		"resourceType": "application", "resourceId": appID, "mountPath": "/data", "readOnly": false,
+		"containerId": "container-already-running",
+	}), ownerTok)
+	if live.Code != http.StatusOK {
+		t.Fatalf("container attach status=%d body=%s", live.Code, live.Body.String())
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM agent_commands WHERE operation = 'ATTACH_VOLUME' AND server_id = $1`, serverID).Scan(&attachCommands); err != nil {
+		t.Fatal(err)
+	}
+	if attachCommands != 1 {
+		t.Fatalf("existing-container attach commands=%d", attachCommands)
+	}
+
+	deploy := doJSON(t, srv, http.MethodPost, "/api/v1/applications/"+appID+"/deployments", mustJSON(map[string]any{"trigger": "manual"}), ownerTok)
+	if deploy.Code != http.StatusCreated {
+		t.Fatalf("deploy status=%d body=%s", deploy.Code, deploy.Body.String())
+	}
+	var depOut struct {
+		Deployment struct {
+			ID string `json:"id"`
+		} `json:"deployment"`
+	}
+	decode(t, deploy, &depOut)
+	depID, err := uuid.Parse(depOut.Deployment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	orch := orchestrator.New(pool, deployments.NewPostgresRepository(pool), log, orchestrator.Config{SimulateAgent: true})
+	if err := orch.Execute(ctx, depID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := deployments.NewPostgresRepository(pool).Get(ctx, depID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != deployments.StatusRunning || got.ActiveRevisionID == nil {
+		t.Fatalf("status=%s revision=%v", got.Status, got.ActiveRevisionID)
+	}
+	var snap []byte
+	if err := pool.QueryRow(ctx, `SELECT effective_config FROM revisions WHERE id = $1`, *got.ActiveRevisionID).Scan(&snap); err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(snap, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	mounts, _ := cfg["volumeMounts"].([]any)
+	if len(mounts) != 1 {
+		t.Fatalf("volumeMounts=%#v", cfg["volumeMounts"])
+	}
+	first, _ := mounts[0].(map[string]any)
+	if first["name"] != "redis-data" || first["mountPath"] != "/data" || first["readOnly"] != false {
+		t.Fatalf("snapshot=%#v", first)
+	}
+	var desired float64
+	if err := pool.QueryRow(ctx, `
+		SELECT (metadata->>'desiredReplicas')::float8
+		FROM deployment_events
+		WHERE deployment_id = $1 AND message = 'candidate replica containers created'`, depID).Scan(&desired); err != nil {
+		t.Fatal(err)
+	}
+	if desired != 1 {
+		t.Fatalf("desiredReplicas=%v", desired)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE application_configs SET runtime_config = '{"desiredReplicas":2}' WHERE application_id = $1`, appID); err != nil {
+		t.Fatal(err)
+	}
+	over := doJSON(t, srv, http.MethodPost, "/api/v1/applications/"+appID+"/deployments", mustJSON(map[string]any{"trigger": "manual"}), ownerTok)
+	if over.Code != http.StatusCreated {
+		t.Fatalf("over deploy status=%d body=%s", over.Code, over.Body.String())
+	}
+	var overOut struct {
+		Deployment struct {
+			ID string `json:"id"`
+		} `json:"deployment"`
+	}
+	decode(t, over, &overOut)
+	overID, err := uuid.Parse(overOut.Deployment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Execute(ctx, overID); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := deployments.NewPostgresRepository(pool).Get(ctx, overID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != deployments.StatusContainerFailed {
+		t.Fatalf("writable replica limit status=%s", failed.Status)
 	}
 }
 
