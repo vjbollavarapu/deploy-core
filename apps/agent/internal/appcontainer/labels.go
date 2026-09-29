@@ -18,14 +18,16 @@ var (
 
 // Metadata represents the verified platform metadata associated with an application container.
 type Metadata struct {
-	OrganizationID string
-	ApplicationID  string
-	EnvironmentID  string
-	DeploymentID   string
-	RevisionID     string
-	Instance       int
-	AppShortID     string // application slug
-	IsCandidate    bool   // true during candidate evaluation phase before promotion
+	OrganizationID  string
+	ApplicationID   string
+	EnvironmentID   string
+	DeploymentID    string
+	RevisionID      string
+	Instance        int
+	AppShortID      string // application slug
+	ProjectSlug     string // project slug for private-network ownership labels
+	EnvironmentSlug string // environment slug for private-network ownership labels
+	IsCandidate     bool   // true during candidate evaluation phase before promotion
 }
 
 // Validate checks that all required platform identity fields are populated.

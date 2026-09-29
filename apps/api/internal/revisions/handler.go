@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/deploycore/deploy-core/apps/api/internal/agents"
 	"github.com/deploycore/deploy-core/apps/api/internal/auth"
 	"github.com/deploycore/deploy-core/apps/api/pkg/apierror"
 	"github.com/deploycore/deploy-core/apps/api/pkg/pagination"
@@ -13,17 +14,21 @@ import (
 )
 
 type Handler struct {
-	svc  *Service
-	auth *auth.Handler
+	svc          *Service
+	auth         *auth.Handler
+	requireAgent func(http.Handler) http.Handler
 }
 
-func NewHandler(svc *Service, authHandler *auth.Handler) *Handler {
-	return &Handler{svc: svc, auth: authHandler}
+func NewHandler(svc *Service, authHandler *auth.Handler, requireAgent func(http.Handler) http.Handler) *Handler {
+	return &Handler{svc: svc, auth: authHandler, requireAgent: requireAgent}
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.Handle("GET /applications/{applicationId}/revisions", h.auth.RequireAuth(http.HandlerFunc(h.ListByApplication)))
 	mux.Handle("GET /revisions/{revisionId}", h.auth.RequireAuth(http.HandlerFunc(h.Get)))
+	if h.requireAgent != nil {
+		mux.Handle("GET /agents/revisions/{revisionId}/runtime", h.requireAgent(http.HandlerFunc(h.Runtime)))
+	}
 }
 
 type revisionResponse struct {
@@ -93,6 +98,32 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"revision": toResponse(rev)})
+}
+
+func (h *Handler) Runtime(w http.ResponseWriter, r *http.Request) {
+	agent, ok := agents.AgentFromContext(r.Context())
+	if !ok {
+		writeErr(w, r, apierror.Unauthorized("agent not authenticated"))
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("revisionId"))
+	if err != nil {
+		writeErr(w, r, apierror.Validation("invalid revision id", nil))
+		return
+	}
+	cfg, err := h.svc.BootstrapForAgent(r.Context(), agent, id)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	env := make([]map[string]string, 0, len(cfg.Env))
+	for _, item := range cfg.Env {
+		env = append(env, map[string]string{"name": item.Name, "value": item.Value})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"revisionId": cfg.RevisionID.String(),
+		"env":        env,
+	})
 }
 
 func toResponse(rev Revision) revisionResponse {

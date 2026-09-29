@@ -353,18 +353,13 @@ func (c *Client) CreateContainer(ctx context.Context, req CreateContainerRequest
 	}
 
 	// --- Network config ---
-	// First network is set in HostConfig.NetworkMode; additional networks are
-	// connected after container creation.
+	// The primary network is both NetworkMode and an endpoint so DNS aliases apply.
+	// Aliases are taken only from NetworkAliases for that network name.
 	networkCfg := &network.NetworkingConfig{}
 	if len(req.Networks) > 0 {
-		hostCfg.NetworkMode = container.NetworkMode(req.Networks[0])
-		if len(req.Networks) > 1 {
-			eps := make(map[string]*network.EndpointSettings, len(req.Networks)-1)
-			for _, n := range req.Networks[1:] {
-				eps[n] = &network.EndpointSettings{}
-			}
-			networkCfg.EndpointsConfig = eps
-		}
+		mode, endpoints := endpointSettingsForNetworks(req.Networks, req.NetworkAliases)
+		hostCfg.NetworkMode = container.NetworkMode(mode)
+		networkCfg.EndpointsConfig = endpoints
 	}
 
 	resp, err := c.cli.ContainerCreate(ctx, containerCfg, hostCfg, networkCfg, nil, req.Name)
@@ -917,6 +912,27 @@ func (c *Client) InspectNetwork(ctx context.Context, idOrName string) (NetworkDe
 		Containers: endpoints,
 		Options:    nr.Options,
 	}, nil
+}
+
+// endpointSettingsForNetworks builds Docker endpoint settings for every requested
+// network. Aliases are copied only for networks present in the alias map.
+func endpointSettingsForNetworks(networks []string, aliases map[string][]string) (string, map[string]*network.EndpointSettings) {
+	if len(networks) == 0 {
+		return "", nil
+	}
+	endpoints := make(map[string]*network.EndpointSettings, len(networks))
+	for _, name := range networks {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		settings := &network.EndpointSettings{}
+		if list := aliases[name]; len(list) > 0 {
+			settings.Aliases = append([]string(nil), list...)
+		}
+		endpoints[name] = settings
+	}
+	return networks[0], endpoints
 }
 
 // ConnectNetwork connects a container to a Docker network.

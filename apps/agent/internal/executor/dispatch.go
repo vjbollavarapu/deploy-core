@@ -65,13 +65,13 @@ func buildRegistry(cli *docker.Client, tr transport.Client, wsMgr *workspace.Man
 	r[protocol.OpRunHealthCheck] = runHealthCheckHandler(cli)
 
 	// Deployment — Phase A15 Candidate Revision Start
-	r[protocol.OpDeployRevision] = deployRevisionHandler(cli, log)
+	r[protocol.OpDeployRevision] = deployRevisionHandler(cli, tr, log)
 
 	// Activation — Phase A17 Zero-Downtime Activation
 	r[protocol.OpActivateRevision] = activateRevisionHandler(cli, log)
 
 	// Rollback — Phase A19 Rollback Execution
-	r[protocol.OpRollbackRevision] = rollbackRevisionHandler(cli, log)
+	r[protocol.OpRollbackRevision] = rollbackRevisionHandler(cli, tr, log)
 
 	// Telemetry & Stats — Phase A22
 	r[protocol.OpCollectStats] = collectStatsHandler(cli, log)

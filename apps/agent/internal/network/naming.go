@@ -27,7 +27,11 @@ var (
 // FormatPrivateNetworkName formats standard private application network names:
 // Example: dc-<project>-<environment>-private
 func FormatPrivateNetworkName(projectSlug, envSlug string) (string, error) {
-	return FormatNetworkName(projectSlug, envSlug, protocol.NetworkTypePrivate)
+	name, err := protocol.FormatPrivateNetworkName(projectSlug, envSlug)
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", ErrInvalidSlug, err.Error())
+	}
+	return name, nil
 }
 
 // FormatNetworkName builds a scoped platform network name.

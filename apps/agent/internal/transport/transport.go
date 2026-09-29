@@ -38,6 +38,10 @@ type Client interface {
 	// Password must never be logged by callers.
 	FetchDatabaseBootstrap(ctx context.Context, databaseID string) (protocol.DatabaseBootstrap, error)
 
+	// FetchRevisionRuntime loads snapshotted container env for a revision.
+	// Env values must never be logged by callers.
+	FetchRevisionRuntime(ctx context.Context, revisionID string) (protocol.RuntimeBootstrap, error)
+
 	// State returns the current connection state channel for reporting.
 	State() <-chan ConnectionState
 

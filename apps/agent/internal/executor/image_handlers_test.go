@@ -47,6 +47,10 @@ func (m *mockLogTransport) FetchDatabaseBootstrap(_ context.Context, _ string) (
 	return protocol.DatabaseBootstrap{}, nil
 }
 
+func (m *mockLogTransport) FetchRevisionRuntime(_ context.Context, _ string) (protocol.RuntimeBootstrap, error) {
+	return protocol.RuntimeBootstrap{}, nil
+}
+
 func TestPullImageHandler_MissingImage(t *testing.T) {
 	h := pullImageHandler(nil, nil, nil)
 	_, err := h.Execute(context.Background(), map[string]any{})

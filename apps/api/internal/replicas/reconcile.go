@@ -72,6 +72,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, appID uuid.UUID, replaceInde
 		return err
 	}
 	desired := DesiredFromRuntime(runtime)
+	writable, err := r.repo.HasWritableApplicationVolume(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if err := validateWritableReplicaCount(writable, desired); err != nil {
+		return err
+	}
 	list, err := r.repo.ListByApplication(ctx, appID)
 	if err != nil {
 		return err
@@ -92,6 +99,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, appID uuid.UUID, replaceInde
 		rep, ok := byIndex[i]
 		needReplace := replaceIndex == i || (ok && rep.Status == StatusUnhealthy)
 		if ok && !needReplace && rep.Status != StatusStopped && rep.Status != StatusFailed {
+			continue
+		}
+		if writable && ok && rep.ContainerName != "" {
+			if err := r.issueRestart(ctx, app, rep); err != nil {
+				r.log.Warn("writable volume restart failed", slog.String("error", err.Error()), slog.Int("index", i))
+			}
+			continue
+		}
+		if writable && !ok {
+			r.log.Warn("skipping replica create; writable volume is not recreated from an incomplete payload",
+				slog.String("applicationId", appID.String()),
+				slog.Int("index", i),
+			)
 			continue
 		}
 		name := ContainerName(app.Slug, revNumber, i)
@@ -224,6 +244,35 @@ func (r *Reconciler) issueReplicaLifecycle(ctx context.Context, app AppMeta, slo
 			"applicationId": app.ID.String(),
 			"replicaIndex":  slot.ReplicaIndex,
 			"containerName": slot.ContainerName,
+		},
+		IssuedAt:  now,
+		ExpiresAt: now.Add(10 * time.Minute),
+	})
+	return err
+}
+
+func validateWritableReplicaCount(writable bool, desired int) error {
+	if writable && desired != 1 {
+		return fmt.Errorf("writable application volume requires desiredReplicas 1")
+	}
+	return nil
+}
+
+func (r *Reconciler) issueRestart(ctx context.Context, app AppMeta, rep Replica) error {
+	if app.ServerID == nil || r.simulate || rep.ContainerName == "" {
+		return nil
+	}
+	now := r.now().UTC()
+	_, err := r.commands.Create(ctx, agentcmd.Command{
+		OrganizationID: app.OrganizationID,
+		ServerID:       *app.ServerID,
+		Operation:      protocol.OpRestartContainer,
+		SchemaVersion:  protocol.SchemaVersion,
+		Payload: map[string]any{
+			"applicationId": app.ID.String(),
+			"replicaIndex":  rep.ReplicaIndex,
+			"containerName": rep.ContainerName,
+			"reason":        "writable_volume_restart",
 		},
 		IssuedAt:  now,
 		ExpiresAt: now.Add(10 * time.Minute),

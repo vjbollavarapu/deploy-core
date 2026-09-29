@@ -101,10 +101,8 @@ func (a *Activator) Activate(ctx context.Context, spec ActivationSpec) (Activati
 		return ActivationResult{}, fmt.Errorf("candidate container ID or name is required")
 	}
 
-	proxyNetwork := spec.ProxyNetwork
-	if strings.TrimSpace(proxyNetwork) == "" {
-		proxyNetwork = "deploycore-proxy"
-	}
+	proxyNetwork := strings.TrimSpace(spec.ProxyNetwork)
+	attachProxy := proxyNetwork != ""
 
 	retentionPolicy := spec.RetentionPolicy
 	if retentionPolicy == "" {
@@ -140,9 +138,12 @@ func (a *Activator) Activate(ctx context.Context, spec ActivationSpec) (Activati
 		"oldContainerId", spec.OldContainerID,
 	)
 
-	// 2. Attach / enable routing on proxy network
-	if err := a.client.ConnectNetwork(ctx, proxyNetwork, insp.ID); err != nil {
-		return ActivationResult{}, fmt.Errorf("connect candidate to proxy network %q: %w", proxyNetwork, err)
+	// 2. Attach routing on the proxy network only when the caller supplied one.
+	// Applications without Traefik configuration stay on the private network.
+	if attachProxy {
+		if err := a.client.ConnectNetwork(ctx, proxyNetwork, insp.ID); err != nil {
+			return ActivationResult{}, fmt.Errorf("connect candidate to proxy network %q: %w", proxyNetwork, err)
+		}
 	}
 
 	// 3. Verify route if configured
@@ -157,8 +158,9 @@ func (a *Activator) Activate(ctx context.Context, spec ActivationSpec) (Activati
 				"error", probeErr,
 				"candidateId", insp.ID,
 			)
-			// Immediate rollback: disconnect candidate from proxy network so old revision remains serving
-			_ = a.client.DisconnectNetwork(ctx, proxyNetwork, insp.ID, false)
+			if attachProxy {
+				_ = a.client.DisconnectNetwork(ctx, proxyNetwork, insp.ID, false)
+			}
 			return ActivationResult{}, fmt.Errorf("%w: %v", ErrRouteVerificationFailed, probeErr)
 		}
 	}
@@ -177,9 +179,10 @@ func (a *Activator) Activate(ctx context.Context, spec ActivationSpec) (Activati
 			"retentionPolicy", retentionPolicy,
 		)
 
-		// 4a. Disconnect old revision from proxy network so new traffic ceases
-		if err := a.client.DisconnectNetwork(ctx, proxyNetwork, oldID, false); err != nil {
-			a.log.Warn("Failed to disconnect old container from proxy network", "oldContainerId", oldID, "error", err)
+		if attachProxy {
+			if err := a.client.DisconnectNetwork(ctx, proxyNetwork, oldID, false); err != nil {
+				a.log.Warn("Failed to disconnect old container from proxy network", "oldContainerId", oldID, "error", err)
+			}
 		}
 
 		// 4b. Drain period to let in-flight connections complete

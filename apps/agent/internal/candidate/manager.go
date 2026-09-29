@@ -227,9 +227,10 @@ func (m *Manager) ensureImage(ctx context.Context, spec CandidateSpec) (docker.I
 
 func (m *Manager) ensureNetworks(ctx context.Context, spec CandidateSpec) error {
 	netMeta := network.Metadata{
-		OrganizationID: spec.Metadata.OrganizationID,
-		ProjectSlug:    spec.Metadata.AppShortID,
-		EnvironmentID:  spec.Metadata.EnvironmentID,
+		OrganizationID:  spec.Metadata.OrganizationID,
+		ProjectSlug:     spec.Metadata.ProjectSlug,
+		EnvironmentID:   spec.Metadata.EnvironmentID,
+		EnvironmentSlug: spec.Metadata.EnvironmentSlug,
 	}
 
 	for _, n := range spec.Networks {
@@ -381,6 +382,7 @@ func (m *Manager) createCandidateContainer(ctx context.Context, spec CandidateSp
 		req.PlatformLabels = make(map[string]string)
 	}
 	req.PlatformLabels[protocol.LabelCandidate] = "true"
+	req.NetworkAliases = privateNetworkAliases(candidateNetworks, spec.DNSAlias)
 
 	createRes, err := m.client.CreateContainer(ctx, req)
 	if err != nil {
@@ -417,4 +419,26 @@ func (m *Manager) waitForRuntimeStart(ctx context.Context, containerID string, t
 		case <-ticker.C:
 		}
 	}
+}
+
+// privateNetworkAliases attaches dnsAlias only to the project/environment private network.
+func privateNetworkAliases(networks []string, alias string) map[string][]string {
+	alias = strings.TrimSpace(alias)
+	if alias == "" || !protocol.ValidDNSAlias(alias) {
+		return nil
+	}
+	out := map[string][]string{}
+	for _, name := range networks {
+		name = strings.TrimSpace(name)
+		if name == "" || name == protocol.ProxyNetworkName {
+			continue
+		}
+		if strings.HasSuffix(name, "-"+protocol.NetworkTypePrivate) {
+			out[name] = []string{alias}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

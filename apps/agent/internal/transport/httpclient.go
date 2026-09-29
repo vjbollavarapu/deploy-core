@@ -340,3 +340,27 @@ func (c *HTTPClient) FetchDatabaseBootstrap(ctx context.Context, databaseID stri
 	}
 	return out, nil
 }
+
+// FetchRevisionRuntime loads a revision's snapshotted environment.
+// The response body is never included in errors, and values must not be logged.
+func (c *HTTPClient) FetchRevisionRuntime(ctx context.Context, revisionID string) (protocol.RuntimeBootstrap, error) {
+	var out protocol.RuntimeBootstrap
+	id := strings.TrimSpace(revisionID)
+	if id == "" {
+		return out, fmt.Errorf("revisionId is required")
+	}
+	path := fmt.Sprintf("/api/v1/agents/revisions/%s/runtime", id)
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return out, fmt.Errorf("failed to fetch revision runtime")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return out, fmt.Errorf("revision runtime unexpected status %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, fmt.Errorf("failed to decode revision runtime")
+	}
+	return out, nil
+}

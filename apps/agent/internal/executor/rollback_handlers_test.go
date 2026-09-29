@@ -8,7 +8,7 @@ import (
 )
 
 func TestRollbackRevisionHandler_Validation(t *testing.T) {
-	h := rollbackRevisionHandler(nil, nil)
+	h := rollbackRevisionHandler(nil, nil, nil)
 
 	_, err := h.Execute(context.Background(), map[string]any{})
 	if err == nil {
@@ -37,7 +37,7 @@ func TestRollbackRevisionHandler_Validation(t *testing.T) {
 }
 
 func TestRollbackRevisionHandler_RebuildForbidden(t *testing.T) {
-	h := rollbackRevisionHandler(nil, nil)
+	h := rollbackRevisionHandler(nil, nil, nil)
 
 	_, err := h.Execute(context.Background(), map[string]any{
 		"applicationId":    "app-1",
@@ -55,7 +55,7 @@ func TestRollbackRevisionHandler_RebuildForbidden(t *testing.T) {
 }
 
 func TestRollbackRevisionHandler_NilDockerFails(t *testing.T) {
-	h := rollbackRevisionHandler(nil, nil)
+	h := rollbackRevisionHandler(nil, nil, nil)
 
 	_, err := h.Execute(context.Background(), map[string]any{
 		"applicationId":    "app-1",
@@ -72,7 +72,7 @@ func TestRollbackRevisionHandler_NilDockerFails(t *testing.T) {
 }
 
 func TestDeployRevisionHandler_DelegatesToRollbackOnTrigger(t *testing.T) {
-	h := deployRevisionHandler(nil, nil)
+	h := deployRevisionHandler(nil, nil, nil)
 
 	_, err := h.Execute(context.Background(), map[string]any{
 		"trigger":          "rollback",

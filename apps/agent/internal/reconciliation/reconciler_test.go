@@ -43,6 +43,43 @@ func (m *mockReconDockerClient) ListVolumes(ctx context.Context) ([]docker.Volum
 	return m.volumes, nil
 }
 
+func TestReconciler_RestartPreservesVolumeMount(t *testing.T) {
+	mounts := []docker.MountPoint{{Type: "volume", Source: "redis-data", Destination: "/data", RW: true}}
+	cli := &mockReconDockerClient{
+		containers: []docker.ContainerSummary{{
+			ID: "cnt-redis", Names: []string{"/dc-redis-r1-1"}, State: "exited",
+			Labels: map[string]string{protocol.LabelManaged: "true"},
+		}},
+		details: map[string]docker.ContainerDetail{
+			"cnt-redis": {
+				ID: "cnt-redis", Name: "/dc-redis-r1-1",
+				State:  docker.ContainerState{Running: false, Status: "exited", ExitCode: 1},
+				Mounts: mounts,
+			},
+		},
+	}
+	report, err := NewReconciler(cli, nil).Reconcile(context.Background(), DesiredState{
+		AllowSafeRestartExited: true,
+		Containers: []DesiredContainer{{
+			ContainerName: "dc-redis-r1-1", DesiredStatus: "running",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cli.restarted) != 1 || cli.restarted[0] != "cnt-redis" {
+		t.Fatalf("restarted = %#v", cli.restarted)
+	}
+	if len(cli.details["cnt-redis"].Mounts) != 1 || cli.details["cnt-redis"].Mounts[0].Destination != "/data" {
+		t.Fatal("restart replaced the volume mount")
+	}
+	for _, d := range report.Discrepancies {
+		if d.ActionTaken != "restarted" && d.Type == DiscrepancyExitedContainer {
+			t.Fatalf("action = %s", d.ActionTaken)
+		}
+	}
+}
+
 func TestReconciler_AllDiscrepancies(t *testing.T) {
 	cli := &mockReconDockerClient{
 		containers: []docker.ContainerSummary{

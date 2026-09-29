@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -564,5 +565,107 @@ func TestOrchestratorRevisionNumbersIncrement(t *testing.T) {
 	}
 	if numbers[0] != 1 || numbers[1] != 2 {
 		t.Fatalf("revision numbers=%v", numbers)
+	}
+}
+
+func TestRevisionVolumeSnapshotAndWritableReplicaLimit(t *testing.T) {
+	pool := testPool(t)
+	orgID, appID, envID, serverID, userID := seedApp(t, pool)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO volumes (
+			organization_id, server_id, name, mount_path, state, attached_resource_type, attached_resource_id, docker_name, labels
+		) VALUES
+		($1, $2, 'redis-data', '/data', 'ATTACHED', 'application', $3, 'redis-data', '{"readOnly":false}'),
+		($1, $2, 'pg-data', '/var/lib/postgresql/data', 'ATTACHED', 'database', $4, 'pg-data', '{}')`,
+		orgID, serverID, appID, uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	deployRepo := deployments.NewPostgresRepository(pool)
+	orch := orchestrator.New(pool, deployRepo, log, orchestrator.Config{SimulateAgent: true})
+	d, err := deployRepo.CreateQueued(ctx, orgID, appID, envID, &serverID, deployments.TriggerManual, nil, nil, "vol-1", userID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Execute(ctx, d.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := deployRepo.Get(ctx, d.ID)
+	var snap []byte
+	if err := pool.QueryRow(ctx, `SELECT effective_config FROM revisions WHERE id = $1`, *got.ActiveRevisionID).Scan(&snap); err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(snap, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	mounts, _ := cfg["volumeMounts"].([]any)
+	if len(mounts) != 1 {
+		t.Fatalf("volumeMounts = %#v", cfg["volumeMounts"])
+	}
+	first, _ := mounts[0].(map[string]any)
+	if first["name"] != "redis-data" || first["mountPath"] != "/data" || first["readOnly"] != false {
+		t.Fatalf("snapshot = %#v", first)
+	}
+	if strings.Contains(string(snap), "/var/lib/postgresql/data") {
+		t.Fatal("database volume was snapshotted")
+	}
+	if _, err := pool.Exec(ctx, `UPDATE volumes SET mount_path = '/data-new' WHERE name = 'redis-data'`); err != nil {
+		t.Fatal(err)
+	}
+	var snapAfter []byte
+	if err := pool.QueryRow(ctx, `SELECT effective_config FROM revisions WHERE id = $1`, *got.ActiveRevisionID).Scan(&snapAfter); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(snapAfter), "/data-new") {
+		t.Fatal("existing revision changed after a later attachment update")
+	}
+	if _, err := pool.Exec(ctx, `UPDATE application_configs SET runtime_config = '{"desiredReplicas":2}' WHERE application_id = $1`, appID); err != nil {
+		t.Fatal(err)
+	}
+	d2, err := deployRepo.CreateQueued(ctx, orgID, appID, envID, &serverID, deployments.TriggerManual, nil, nil, "vol-2", userID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Execute(ctx, d2.ID); err != nil {
+		t.Fatal(err)
+	}
+	failed, _ := deployRepo.Get(ctx, d2.ID)
+	if failed.Status != deployments.StatusContainerFailed {
+		t.Fatalf("status=%s want CONTAINER_FAILED", failed.Status)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE application_configs SET runtime_config = '{"desiredReplicas":1}' WHERE application_id = $1`, appID); err != nil {
+		t.Fatal(err)
+	}
+	d3, err := deployRepo.CreateQueued(ctx, orgID, appID, envID, &serverID, deployments.TriggerManual, nil, nil, "vol-3", userID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Execute(ctx, d3.ID); err != nil {
+		t.Fatal(err)
+	}
+	got3, _ := deployRepo.Get(ctx, d3.ID)
+	if got3.Status != deployments.StatusRunning {
+		t.Fatalf("replacement status=%s", got3.Status)
+	}
+	var snap3 []byte
+	if err := pool.QueryRow(ctx, `SELECT effective_config FROM revisions WHERE id = $1`, *got3.ActiveRevisionID).Scan(&snap3); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(snap3), "/data-new") {
+		t.Fatal("replacement revision missed the updated mount path")
+	}
+	if strings.Contains(string(snapAfter), "/data-new") {
+		t.Fatal("original revision changed when the replacement was created")
+	}
+	var state string
+	var deletedAt *time.Time
+	if err := pool.QueryRow(ctx, `SELECT state, deleted_at FROM volumes WHERE name = 'redis-data' AND organization_id = $1`, orgID).Scan(&state, &deletedAt); err != nil {
+		t.Fatal(err)
+	}
+	if state != "ATTACHED" || deletedAt != nil {
+		t.Fatalf("volume state=%s deleted=%v", state, deletedAt)
 	}
 }

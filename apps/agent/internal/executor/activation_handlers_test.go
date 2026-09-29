@@ -39,7 +39,7 @@ func TestActivateRevisionHandler_NilDockerFails(t *testing.T) {
 }
 
 func TestDeployRevisionHandler_DelegatesToActivationOnPhase(t *testing.T) {
-	h := deployRevisionHandler(nil, nil)
+	h := deployRevisionHandler(nil, nil, nil)
 
 	// DeployRevision with phase: enable_routing must not stub-succeed without Docker.
 	_, err := h.Execute(context.Background(), map[string]any{

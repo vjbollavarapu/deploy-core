@@ -63,6 +63,7 @@ type CandidateSpec struct {
 	PullPolicy     PullPolicy
 	RegistryAuth   *docker.RegistryAuth
 	Networks       []NetworkSpec
+	DNSAlias       string // single label attached only to the private network
 	Volumes        []VolumeSpec
 	Entrypoint     []string
 	Command        []string

@@ -21,6 +21,8 @@ type Repository interface {
 	Create(ctx context.Context, meta Metadata, ciphertext, nonce []byte, actorID uuid.UUID) (Metadata, error)
 	Get(ctx context.Context, id uuid.UUID) (Record, error)
 	GetActiveByName(ctx context.Context, orgID uuid.UUID, scope string, projectID, environmentID, applicationID *uuid.UUID, name string) (Record, error)
+	// GetByVersion returns the exact version, including rows soft-deleted by rotation.
+	GetByVersion(ctx context.Context, orgID uuid.UUID, scope, name string, version int, projectID, environmentID, applicationID *uuid.UUID) (Record, error)
 	List(ctx context.Context, orgID uuid.UUID, scope *string, projectID, environmentID, applicationID *uuid.UUID, limit, offset int) ([]Metadata, int64, error)
 	SoftDelete(ctx context.Context, id uuid.UUID, at time.Time) error
 	ResolveProject(ctx context.Context, projectID uuid.UUID) (orgID uuid.UUID, err error)
@@ -62,6 +64,23 @@ func (r *PostgresRepository) Get(ctx context.Context, id uuid.UUID) (Record, err
 		       ciphertext, nonce
 		FROM secrets WHERE id = $1 AND deleted_at IS NULL`
 	rec, err := scanRecord(r.pool.QueryRow(ctx, q, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Record{}, ErrNotFound
+	}
+	return rec, err
+}
+
+func (r *PostgresRepository) GetByVersion(ctx context.Context, orgID uuid.UUID, scope, name string, version int, projectID, environmentID, applicationID *uuid.UUID) (Record, error) {
+	const q = `
+		SELECT id, organization_id, scope, project_id, environment_id, application_id,
+		       name, version, key_id, algorithm, created_by, updated_by, created_at, updated_at,
+		       ciphertext, nonce
+		FROM secrets
+		WHERE organization_id = $1 AND scope = $2 AND name = $3 AND version = $4
+		  AND project_id IS NOT DISTINCT FROM $5
+		  AND environment_id IS NOT DISTINCT FROM $6
+		  AND application_id IS NOT DISTINCT FROM $7`
+	rec, err := scanRecord(r.pool.QueryRow(ctx, q, orgID, scope, name, version, projectID, environmentID, applicationID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}

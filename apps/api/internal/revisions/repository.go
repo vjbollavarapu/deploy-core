@@ -16,7 +16,16 @@ var ErrNotFound = errors.New("not found")
 type Repository interface {
 	GetApplicationOrg(ctx context.Context, applicationID uuid.UUID) (uuid.UUID, error)
 	Get(ctx context.Context, id uuid.UUID) (Revision, error)
+	GetRuntimeContext(ctx context.Context, id uuid.UUID) (RuntimeContext, error)
 	ListByApplication(ctx context.Context, applicationID uuid.UUID, status *string, limit, offset int) ([]Revision, int64, error)
+}
+
+// RuntimeContext is the revision snapshot plus the scope ids needed to resolve secrets.
+type RuntimeContext struct {
+	Revision
+	ProjectID     uuid.UUID
+	EnvironmentID uuid.UUID
+	ServerID      *uuid.UUID
 }
 
 type PostgresRepository struct {
@@ -48,6 +57,46 @@ func (r *PostgresRepository) Get(ctx context.Context, id uuid.UUID) (Revision, e
 		return Revision{}, ErrNotFound
 	}
 	return rev, err
+}
+
+func (r *PostgresRepository) GetRuntimeContext(ctx context.Context, id uuid.UUID) (RuntimeContext, error) {
+	const q = `
+		SELECT r.id, r.organization_id, r.application_id, r.deployment_id, r.revision_number, r.status,
+		       r.commit_sha, r.image_digest, r.image_tag, r.effective_config, r.variable_snapshot,
+		       r.secret_refs, r.health_check, r.resource_limits, r.created_by, r.created_at, r.updated_at,
+		       a.project_id, a.environment_id, d.server_id
+		FROM revisions r
+		JOIN applications a ON a.id = r.application_id
+		LEFT JOIN deployments d ON d.id = r.deployment_id
+		WHERE r.id = $1`
+	var rc RuntimeContext
+	var eff, vars, secretRefs, health, limits []byte
+	err := r.pool.QueryRow(ctx, q, id).Scan(
+		&rc.ID, &rc.OrganizationID, &rc.ApplicationID, &rc.DeploymentID, &rc.RevisionNumber, &rc.Status,
+		&rc.CommitSHA, &rc.ImageDigest, &rc.ImageTag, &eff, &vars,
+		&secretRefs, &health, &limits, &rc.CreatedBy, &rc.CreatedAt, &rc.UpdatedAt,
+		&rc.ProjectID, &rc.EnvironmentID, &rc.ServerID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RuntimeContext{}, ErrNotFound
+	}
+	if err != nil {
+		return RuntimeContext{}, err
+	}
+	rc.EffectiveConfig = map[string]any{}
+	rc.VariableSnapshot = map[string]any{}
+	rc.HealthCheck = map[string]any{}
+	rc.ResourceLimits = map[string]any{}
+	rc.SecretRefs = []any{}
+	_ = json.Unmarshal(eff, &rc.EffectiveConfig)
+	_ = json.Unmarshal(vars, &rc.VariableSnapshot)
+	_ = json.Unmarshal(health, &rc.HealthCheck)
+	_ = json.Unmarshal(limits, &rc.ResourceLimits)
+	_ = json.Unmarshal(secretRefs, &rc.SecretRefs)
+	if rc.SecretRefs == nil {
+		rc.SecretRefs = []any{}
+	}
+	return rc, nil
 }
 
 func (r *PostgresRepository) ListByApplication(ctx context.Context, applicationID uuid.UUID, status *string, limit, offset int) ([]Revision, int64, error) {

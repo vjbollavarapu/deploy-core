@@ -122,11 +122,7 @@ export function StepReview({ values, projects = [], servers = [] }: StepReviewPr
           />
           <SummaryRow
             label="Secrets"
-            value={
-              values.secrets.length === 0
-                ? 'None'
-                : values.secrets.map((item) => item.name).filter(Boolean).join(', ')
-            }
+            value="Included from existing scopes. Secret values are not entered here."
           />
         </CardContent>
       </Card>
@@ -219,8 +215,8 @@ export function StepDeploy({ values, pending, projects = [], servers = [] }: Ste
           </p>
           <p className="text-xs text-muted-foreground">
             {pending
-              ? 'Registering application with control plane and queueing deployment task.'
-              : 'Clicking “Deploy” will submit your configuration to the control plane, allocate containers on the target server, and stream the build logs.'}
+              ? 'Creating the application, saving environment variables, then queueing the deployment.'
+              : 'Clicking “Deploy” saves the application and its environment variables, then queues the deployment.'}
           </p>
         </div>
       </div>

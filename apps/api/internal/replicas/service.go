@@ -104,6 +104,17 @@ func (s *Service) Scale(ctx context.Context, actorID, appID uuid.UUID, desired i
 	if prev == desired {
 		return s.GetSummary(ctx, actorID, appID)
 	}
+	if desired != 1 {
+		writable, err := s.repo.HasWritableApplicationVolume(ctx, appID)
+		if err != nil {
+			return Summary{}, err
+		}
+		if writable {
+			return Summary{}, apierror.Validation("writable application volume requires desiredReplicas 1", map[string]any{
+				"desiredReplicas": "must be 1 while a writable application volume is attached",
+			})
+		}
+	}
 
 	if app.ServerID != nil && s.capacity != nil && desired > prev {
 		cpu, mem, disk := 0, int64(0), int64(0)

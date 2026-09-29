@@ -12,7 +12,9 @@ import (
 	"github.com/deploycore/deploy-core/apps/agent/internal/candidate"
 	"github.com/deploycore/deploy-core/apps/agent/internal/docker"
 	"github.com/deploycore/deploy-core/apps/agent/internal/network"
+	"github.com/deploycore/deploy-core/apps/agent/internal/transport"
 	"github.com/deploycore/deploy-core/apps/agent/internal/volume"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 )
 
 var slugSafeRE = regexp.MustCompile(`[^a-z0-9\-]+`)
@@ -35,6 +37,9 @@ type deployRevisionPayload struct {
 	ReplicaIndex    int                      `json:"replicaIndex"`
 	Instance        int                      `json:"instance,omitempty"`
 	ApplicationSlug string                   `json:"applicationSlug,omitempty"`
+	ProjectSlug     string                   `json:"projectSlug,omitempty"`
+	EnvironmentSlug string                   `json:"environmentSlug,omitempty"`
+	DNSAlias        string                   `json:"dnsAlias,omitempty"`
 	EnvironmentID   string                   `json:"environmentId,omitempty"`
 	Image           string                   `json:"image"`
 	PullPolicy      string                   `json:"pullPolicy,omitempty"`
@@ -50,15 +55,18 @@ type deployRevisionPayload struct {
 	StartupTimeout  string                   `json:"startupTimeout,omitempty"`
 }
 
+// startDeployCandidate is the container-create seam. Tests replace it to observe Env.
+var startDeployCandidate = func(ctx context.Context, cli *docker.Client, log *slog.Logger, spec candidate.CandidateSpec) (candidate.CandidateResult, error) {
+	netMgr := network.NewManager(cli)
+	volMgr := volume.NewManager(cli)
+	return candidate.NewManager(cli, netMgr, volMgr, log).StartCandidate(ctx, spec)
+}
+
 // deployRevisionHandler executes the candidate deployment primitive for OpDeployRevision.
-func deployRevisionHandler(cli *docker.Client, log *slog.Logger) Handler {
+func deployRevisionHandler(cli *docker.Client, tr transport.Client, log *slog.Logger) Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-
-	netMgr := network.NewManager(cli)
-	volMgr := volume.NewManager(cli)
-	candMgr := candidate.NewManager(cli, netMgr, volMgr, log)
 
 	return HandlerFunc(func(ctx context.Context, payload map[string]any) (ExecutionResult, error) {
 		var p deployRevisionPayload
@@ -72,7 +80,7 @@ func deployRevisionHandler(cli *docker.Client, log *slog.Logger) Handler {
 		}
 
 		if p.Phase == "rollback" || p.Trigger == "rollback" {
-			rbHandler := rollbackRevisionHandler(cli, log)
+			rbHandler := rollbackRevisionHandler(cli, tr, log)
 			return rbHandler.Execute(ctx, payload)
 		}
 
@@ -82,10 +90,19 @@ func deployRevisionHandler(cli *docker.Client, log *slog.Logger) Handler {
 		if strings.TrimSpace(p.Image) == "" {
 			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "image is required")
 		}
+		if alias := strings.TrimSpace(p.DNSAlias); alias != "" && !protocol.ValidDNSAlias(alias) {
+			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "dnsAlias must be a single DNS label")
+		}
 
 		if cli == nil {
 			return ExecutionResult{}, Errorf(ErrCodeDockerError, "docker client unavailable")
 		}
+
+		runtimeEnv, sensitive, err := applyRevisionRuntime(ctx, tr, p.RevisionID, p.Env)
+		if err != nil {
+			return ExecutionResult{}, sanitizeRuntimeErr(err, sensitive)
+		}
+		p.Env = runtimeEnv
 
 		// Defaults for deployment and revision identifiers if omitted
 		if p.DeploymentID == "" {
@@ -162,18 +179,21 @@ func deployRevisionHandler(cli *docker.Client, log *slog.Logger) Handler {
 
 		candSpec := candidate.CandidateSpec{
 			Metadata: appcontainer.Metadata{
-				OrganizationID: p.OrganizationID,
-				ApplicationID:  p.ApplicationID,
-				EnvironmentID:  p.EnvironmentID,
-				DeploymentID:   p.DeploymentID,
-				RevisionID:     p.RevisionID,
-				Instance:       instance,
-				AppShortID:     appSlug,
-				IsCandidate:    true,
+				OrganizationID:  p.OrganizationID,
+				ApplicationID:   p.ApplicationID,
+				EnvironmentID:   p.EnvironmentID,
+				DeploymentID:    p.DeploymentID,
+				RevisionID:      p.RevisionID,
+				Instance:        instance,
+				AppShortID:      appSlug,
+				ProjectSlug:     p.ProjectSlug,
+				EnvironmentSlug: p.EnvironmentSlug,
+				IsCandidate:     true,
 			},
 			Image:          p.Image,
 			PullPolicy:     candidate.PullPolicy(p.PullPolicy),
 			Networks:       netSpecs,
+			DNSAlias:       strings.TrimSpace(p.DNSAlias),
 			Volumes:        volSpecs,
 			InternalPorts:  p.InternalPorts,
 			CPUMillis:      p.CPUMillis,
@@ -185,12 +205,12 @@ func deployRevisionHandler(cli *docker.Client, log *slog.Logger) Handler {
 			StartupTimeout: startupTimeout,
 		}
 
-		res, err := candMgr.StartCandidate(ctx, candSpec)
+		res, err := startDeployCandidate(ctx, cli, log, candSpec)
 		if err != nil {
 			if errors.Is(err, candidate.ErrStaleNonCandidate) {
-				return ExecutionResult{}, Errorf(ErrCodeConflict, "candidate container conflict: %v", err)
+				return ExecutionResult{}, sanitizeRuntimeErr(Errorf(ErrCodeConflict, "candidate container conflict: %v", err), sensitive)
 			}
-			return ExecutionResult{}, wrapDockerErr(err)
+			return ExecutionResult{}, sanitizeRuntimeErr(wrapDockerErr(err), sensitive)
 		}
 
 		return ExecutionResult{

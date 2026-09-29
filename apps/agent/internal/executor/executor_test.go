@@ -111,6 +111,10 @@ func (m *mockTransport) FetchDatabaseBootstrap(_ context.Context, _ string) (pro
 	return protocol.DatabaseBootstrap{}, nil
 }
 
+func (m *mockTransport) FetchRevisionRuntime(_ context.Context, _ string) (protocol.RuntimeBootstrap, error) {
+	return protocol.RuntimeBootstrap{}, nil
+}
+
 func (m *mockTransport) PollCommands(ctx context.Context) ([]protocol.CommandEnvelope, error) {
 	m.mu.Lock()
 	if len(m.commands) == 0 {

@@ -220,6 +220,8 @@ type CreateContainerRequest struct {
 	RestartPolicy RestartPolicy
 	// Networks is a list of Docker network names/IDs to connect the container to.
 	Networks []string
+	// NetworkAliases maps a network name to DNS aliases applied only on that network.
+	NetworkAliases map[string][]string
 	// Volumes lists managed volume mounts. Host paths are blocked unless
 	// PrivilegedPolicy.AllowArbitraryHostPaths is true.
 	Volumes []VolumeMount

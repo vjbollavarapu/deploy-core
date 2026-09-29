@@ -29,10 +29,13 @@ type RollbackSpec struct {
 	ReplicaIndex         int                     `json:"replicaIndex"`
 	Instance             int                     `json:"instance,omitempty"`
 	ApplicationSlug      string                  `json:"applicationSlug,omitempty"`
+	ProjectSlug          string                  `json:"projectSlug,omitempty"`
+	EnvironmentSlug      string                  `json:"environmentSlug,omitempty"`
 	EnvironmentID        string                  `json:"environmentId,omitempty"`
 	Image                string                  `json:"image"`
 	ImageDigest          string                  `json:"imageDigest,omitempty"`
 	Networks             []candidate.NetworkSpec `json:"networks,omitempty"`
+	DNSAlias             string                  `json:"dnsAlias,omitempty"`
 	Volumes              []candidate.VolumeSpec  `json:"volumes,omitempty"`
 	InternalPorts        []docker.PortMapping    `json:"internalPorts,omitempty"`
 	CPUMillis            int64                   `json:"cpuMillis,omitempty"`

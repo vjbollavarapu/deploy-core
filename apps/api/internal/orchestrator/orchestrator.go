@@ -34,6 +34,8 @@ type Config struct {
 	ForceBuildFail bool
 	// ForceStartFail fails STARTING (test-only).
 	ForceStartFail bool
+	// ForceRoutingFail fails ACTIVATING before retirement (test-only).
+	ForceRoutingFail bool
 }
 
 // HealthGate records aggregated health during deployment verification.
@@ -55,16 +57,25 @@ type WebhookEmitter interface {
 
 // Orchestrator runs deployment workflow steps in a resumable fashion.
 type Orchestrator struct {
-	pool     *pgxpool.Pool
-	deploys  deployments.Repository
-	commands *agentcmd.PostgresRepository
-	replicas *replicas.PostgresRepository
-	health   HealthGate
-	notify   NotificationEmitter
-	webhooks WebhookEmitter
-	log      *slog.Logger
-	cfg      Config
-	now      func() time.Time
+	pool      *pgxpool.Pool
+	deploys   deployments.Repository
+	commands  *agentcmd.PostgresRepository
+	replicas  *replicas.PostgresRepository
+	health    HealthGate
+	notify    NotificationEmitter
+	webhooks  WebhookEmitter
+	log       *slog.Logger
+	cfg       Config
+	now       func() time.Time
+	simulated []simulatedCommand
+}
+
+// simulatedCommand is an agent operation recorded while SimulateAgent is set.
+// Production command persistence is unchanged.
+type simulatedCommand struct {
+	deploymentID uuid.UUID
+	op           string
+	payload      map[string]any
 }
 
 func New(pool *pgxpool.Pool, deploys deployments.Repository, log *slog.Logger, cfg Config) *Orchestrator {
@@ -303,32 +314,49 @@ func (o *Orchestrator) stepCreatingContainer(ctx context.Context, d deployments.
 	}
 	traefik := o.buildTraefikPayload(ctx, d.ApplicationID, slug)
 	cfg, _ := o.loadAppConfig(ctx, d.ApplicationID)
+	projectSlug, envSlug, projectID, scopeErr := o.applicationNetworkScope(ctx, d.ApplicationID)
+	if scopeErr != nil {
+		return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", scopeErr.Error())
+	}
+	netName, nameErr := protocol.FormatPrivateNetworkName(projectSlug, envSlug)
+	if nameErr != nil {
+		return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", nameErr.Error())
+	}
+	if !protocol.ValidDNSAlias(slug) {
+		return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", "application slug is not a valid DNS alias")
+	}
+	if err := o.issueOrSimulate(ctx, d, protocol.OpCreateNetwork, createPrivateNetworkPayload(projectID, projectSlug, d.EnvironmentID.String(), envSlug)); err != nil {
+		return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", err.Error())
+	}
+	mounts, mountErr := o.revisionVolumeMounts(ctx, d.TargetRevisionID)
+	if mountErr != nil {
+		return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", mountErr.Error())
+	}
+	writable := writableMounts(mounts)
+	if err := validateWritableReplicas(writable, desired); err != nil {
+		return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", err.Error())
+	}
+	if cutoverStopsFirst(writable) {
+		prev, prevErr := o.getActiveRevision(ctx, d.ApplicationID)
+		if prevErr != nil && !errors.Is(prevErr, pgx.ErrNoRows) {
+			return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", prevErr.Error())
+		}
+		list, listErr := o.replicas.ListByApplication(ctx, d.ApplicationID)
+		if listErr != nil {
+			return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", listErr.Error())
+		}
+		if err := o.stopWritableHolders(ctx, d, list, prev); err != nil {
+			return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", err.Error())
+		}
+	} else if err := o.captureRollingPredecessors(ctx, d, desired); err != nil {
+		return o.fail(ctx, d, deployments.StatusCreatingContainer, deployments.StatusContainerFailed, "CONTAINER_FAILED", err.Error())
+	}
+	volumePayload := agentVolumePayload(mounts)
 	for i := 0; i < desired; i++ {
 		name := replicas.ContainerName(slug, revNumber, i)
-		payload := map[string]any{
-			"deploymentId":    d.ID.String(),
-			"phase":           "create_container",
-			"replicaIndex":    i,
-			"containerName":   name,
-			"desiredReplicas": desired,
-			"applicationSlug": slug,
-		}
-		if isRollback(d) {
-			payload["phase"] = "rollback"
-			payload["trigger"] = "rollback"
-		}
-		if d.TargetRevisionID != nil {
-			payload["revisionId"] = d.TargetRevisionID.String()
-			payload["targetRevisionId"] = d.TargetRevisionID.String()
-		}
-		if traefik != nil {
-			payload["traefik"] = traefik
-		}
-		if cfg.InternalPort != nil && *cfg.InternalPort > 0 {
-			payload["internalPorts"] = []map[string]any{
-				{"containerPort": *cfg.InternalPort, "protocol": "tcp"},
-			}
-		}
+		// Runtime values stay on the revision snapshot. The agent loads them
+		// through the runtime bootstrap endpoint and must not find them here.
+		payload := containerCreateCommandPayload(d, i, desired, slug, name, traefik, cfg.InternalPort, netName, projectSlug, envSlug, volumePayload)
 		// For rollback, identify current production containers for drain/stop.
 		if isRollback(d) {
 			if prev, err := o.getActiveRevision(ctx, d.ApplicationID); err == nil && prev != nil {
@@ -363,6 +391,62 @@ func (o *Orchestrator) stepCreatingContainer(ctx context.Context, d deployments.
 	return o.advance(ctx, d, deployments.StatusStarting, "candidate replica containers created", map[string]any{
 		"desiredReplicas": desired,
 	})
+}
+
+// attachProxyNetwork connects deploycore-proxy only when Traefik routing exists.
+func attachProxyNetwork(payload map[string]any, traefik map[string]any) {
+	if traefik == nil {
+		return
+	}
+	payload["traefik"] = traefik
+	payload["proxyNetwork"] = protocol.ProxyNetworkName
+}
+
+func createPrivateNetworkPayload(projectID, projectSlug, environmentID, environmentSlug string) map[string]any {
+	return map[string]any{
+		"projectId":       projectID,
+		"projectSlug":     projectSlug,
+		"environmentId":   environmentID,
+		"environmentSlug": environmentSlug,
+		"networkType":     protocol.NetworkTypePrivate,
+	}
+}
+
+// containerCreateCommandPayload is the DEPLOY_REVISION body for one replica.
+// It intentionally omits environment variables and secrets.
+func containerCreateCommandPayload(d deployments.Deployment, replicaIndex, desired int, slug, containerName string, traefik map[string]any, internalPort *int, networkName, projectSlug, environmentSlug string, volumes []map[string]any) map[string]any {
+	payload := map[string]any{
+		"deploymentId":    d.ID.String(),
+		"phase":           "create_container",
+		"replicaIndex":    replicaIndex,
+		"containerName":   containerName,
+		"desiredReplicas": desired,
+		"applicationSlug": slug,
+		"projectSlug":     projectSlug,
+		"environmentSlug": environmentSlug,
+		"networks":        []string{networkName},
+		"dnsAlias":        slug,
+	}
+	if len(volumes) > 0 {
+		payload["volumes"] = volumes
+	}
+	if isRollback(d) {
+		payload["phase"] = "rollback"
+		payload["trigger"] = "rollback"
+	}
+	if d.TargetRevisionID != nil {
+		payload["revisionId"] = d.TargetRevisionID.String()
+		payload["targetRevisionId"] = d.TargetRevisionID.String()
+	}
+	if traefik != nil {
+		payload["traefik"] = traefik
+	}
+	if internalPort != nil && *internalPort > 0 {
+		payload["internalPorts"] = []map[string]any{
+			{"containerPort": *internalPort, "protocol": "tcp"},
+		}
+	}
+	return payload
 }
 
 func (o *Orchestrator) stepStarting(ctx context.Context, d deployments.Deployment) (deployments.Deployment, error) {
@@ -507,6 +591,9 @@ func (o *Orchestrator) stepHealthChecking(ctx context.Context, d deployments.Dep
 }
 
 func (o *Orchestrator) stepActivating(ctx context.Context, d deployments.Deployment) (deployments.Deployment, error) {
+	if o.cfg.ForceRoutingFail {
+		return o.fail(ctx, d, deployments.StatusActivating, deployments.StatusRoutingFailed, "ROUTING_FAILED", "forced routing failure")
+	}
 	if d.TargetRevisionID == nil {
 		return o.fail(ctx, d, deployments.StatusActivating, deployments.StatusRoutingFailed, "REVISION_MISSING", "target revision missing")
 	}
@@ -558,11 +645,8 @@ func (o *Orchestrator) stepActivating(ctx context.Context, d deployments.Deploym
 			"containerName":  rep.ContainerName,
 			"routingLabels":  labels,
 			"routingEnabled": true,
-			"proxyNetwork":   "deploycore-proxy",
 		}
-		if traefik := o.buildTraefikPayload(ctx, d.ApplicationID, slug); traefik != nil {
-			activatePayload["traefik"] = traefik
-		}
+		attachProxyNetwork(activatePayload, o.buildTraefikPayload(ctx, d.ApplicationID, slug))
 		if err := o.issueOrSimulate(ctx, d, protocol.OpDeployRevision, activatePayload); err != nil {
 			return o.fail(ctx, d, deployments.StatusActivating, deployments.StatusRoutingFailed, "ROUTING_FAILED", err.Error())
 		}
@@ -577,35 +661,20 @@ func (o *Orchestrator) stepActivating(ctx context.Context, d deployments.Deploym
 		return deployments.Deployment{}, err
 	}
 
-	if prevActive != nil && prevActive.ID != *d.TargetRevisionID {
-		// Drain/stop previous revision replicas (rolling retire).
-		for _, rep := range list {
-			if rep.RevisionID != nil && *rep.RevisionID == prevActive.ID {
-				if err := o.issueOrSimulate(ctx, d, protocol.OpStopContainer, map[string]any{
-					"deploymentId":  d.ID.String(),
-					"revisionId":    prevActive.ID.String(),
-					"replicaIndex":  rep.ReplicaIndex,
-					"containerName": rep.ContainerName,
-					"reason":        "rolling_replace",
-					"drainRouting":  true,
-				}); err != nil {
-					o.log.Warn("old replica retirement command failed",
-						slog.String("error", err.Error()),
-						slog.String("containerName", rep.ContainerName),
-					)
-				}
-			}
-		}
-		if err := o.issueOrSimulate(ctx, d, protocol.OpStopContainer, map[string]any{
-			"deploymentId": d.ID.String(),
-			"revisionId":   prevActive.ID.String(),
-			"reason":       "retire_previous",
-			"drainRouting": true,
-		}); err != nil {
-			o.log.Warn("previous revision retirement command failed",
+	mounts, mountErr := o.revisionVolumeMounts(ctx, d.TargetRevisionID)
+	if mountErr != nil {
+		return deployments.Deployment{}, mountErr
+	}
+	if !cutoverStopsFirst(writableMounts(mounts)) {
+		// Identity was stored before UpsertSlot. A stop failure leaves the new
+		// revision active and this deployment in ACTIVATING so the same
+		// predecessor can be stopped again. Do not revert the activation.
+		if err := o.retireRollingPredecessors(ctx, d); err != nil {
+			o.log.Error("previous container retirement failed",
+				slog.String("deploymentId", d.ID.String()),
 				slog.String("error", err.Error()),
-				slog.String("revisionId", prevActive.ID.String()),
 			)
+			return deployments.Deployment{}, err
 		}
 	}
 
@@ -647,6 +716,10 @@ func (o *Orchestrator) advance(ctx context.Context, d deployments.Deployment, to
 }
 
 func (o *Orchestrator) fail(ctx context.Context, d deployments.Deployment, from, to, code, message string) (deployments.Deployment, error) {
+	switch from {
+	case deployments.StatusCreatingContainer, deployments.StatusStarting, deployments.StatusHealthChecking, deployments.StatusActivating:
+		o.restartCutoverPredecessors(ctx, d)
+	}
 	// Rollback must not mark the reused target revision FAILED — keep it READY/INACTIVE.
 	if d.TargetRevisionID != nil && !isRollback(d) {
 		_ = o.setRevisionStatus(ctx, *d.TargetRevisionID, "FAILED")
@@ -843,6 +916,9 @@ func (o *Orchestrator) buildEffectiveConfig(ctx context.Context, d deployments.D
 	}
 
 	secretRefs = map[string]any{}
+	// Same specificity as variable resolution above: a later scope overwrites
+	// the same name. name and id keep the scan order stable. One active row
+	// per name and scope resource is already enforced by secrets_active_name_uidx.
 	srows, err := o.pool.Query(ctx, `
 		SELECT name, version, scope FROM secrets
 		WHERE organization_id = $1 AND deleted_at IS NULL
@@ -851,7 +927,11 @@ func (o *Orchestrator) buildEffectiveConfig(ctx context.Context, d deployments.D
 		    OR (scope = 'PROJECT' AND project_id = (SELECT project_id FROM applications WHERE id = $2))
 		    OR (scope = 'ENVIRONMENT' AND environment_id = $3)
 		    OR (scope = 'APPLICATION' AND application_id = $2)
-		  )`, d.OrganizationID, d.ApplicationID, d.EnvironmentID)
+		  )
+		ORDER BY CASE scope
+		  WHEN 'ORGANIZATION' THEN 1 WHEN 'PROJECT' THEN 2
+		  WHEN 'ENVIRONMENT' THEN 3 WHEN 'APPLICATION' THEN 4 END,
+		  name ASC, id ASC`, d.OrganizationID, d.ApplicationID, d.EnvironmentID)
 	if err != nil {
 		return nil, nil, nil, cfg, err
 	}
@@ -865,6 +945,10 @@ func (o *Orchestrator) buildEffectiveConfig(ctx context.Context, d deployments.D
 		secretRefs[name] = map[string]any{"version": version, "scope": scope}
 	}
 
+	mounts, err := o.applicationVolumeMounts(ctx, d.ApplicationID, d.ServerID)
+	if err != nil {
+		return nil, nil, nil, cfg, err
+	}
 	eff = map[string]any{
 		"sourceType":     cfg.SourceType,
 		"repositoryUrl":  cfg.RepositoryURL,
@@ -874,6 +958,15 @@ func (o *Orchestrator) buildEffectiveConfig(ctx context.Context, d deployments.D
 		"restartPolicy":  cfg.RestartPolicy,
 		"runtimeConfig":  cfg.RuntimeConfig,
 		"healthCheck":    cfg.HealthCheck,
+	}
+	if len(mounts) > 0 {
+		encoded := make([]any, 0, len(mounts))
+		for _, m := range mounts {
+			encoded = append(encoded, map[string]any{
+				"name": m.Name, "mountPath": m.MountPath, "readOnly": m.ReadOnly,
+			})
+		}
+		eff["volumeMounts"] = encoded
 	}
 	return eff, vars, secretRefs, cfg, nil
 }
@@ -988,6 +1081,11 @@ func (o *Orchestrator) issueOrSimulate(ctx context.Context, d deployments.Deploy
 		return errors.New("no server")
 	}
 	if o.cfg.SimulateAgent {
+		o.simulated = append(o.simulated, simulatedCommand{
+			deploymentID: d.ID,
+			op:           op,
+			payload:      payload,
+		})
 		o.log.Info("simulating agent command",
 			slog.String("operation", op),
 			slog.String("deploymentId", d.ID.String()),
@@ -1085,6 +1183,19 @@ func (o *Orchestrator) waitForCommand(ctx context.Context, commandID uuid.UUID) 
 		case <-ticker.C:
 		}
 	}
+}
+
+func (o *Orchestrator) applicationNetworkScope(ctx context.Context, applicationID uuid.UUID) (projectSlug, envSlug, projectID string, err error) {
+	err = o.pool.QueryRow(ctx, `
+		SELECT p.slug, e.slug, p.id::text
+		FROM applications a
+		JOIN projects p ON p.id = a.project_id
+		JOIN environments e ON e.id = a.environment_id
+		WHERE a.id = $1 AND a.deleted_at IS NULL`, applicationID).Scan(&projectSlug, &envSlug, &projectID)
+	if err != nil {
+		return "", "", "", fmt.Errorf("application network scope: %w", err)
+	}
+	return projectSlug, envSlug, projectID, nil
 }
 
 func (o *Orchestrator) replicaDeployContext(ctx context.Context, d deployments.Deployment) (desired int, slug string, revNumber int, err error) {

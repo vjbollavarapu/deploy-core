@@ -12,7 +12,9 @@ import (
 	"github.com/deploycore/deploy-core/apps/agent/internal/drain"
 	"github.com/deploycore/deploy-core/apps/agent/internal/network"
 	"github.com/deploycore/deploy-core/apps/agent/internal/rollback"
+	"github.com/deploycore/deploy-core/apps/agent/internal/transport"
 	"github.com/deploycore/deploy-core/apps/agent/internal/volume"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 )
 
 type rollbackRevisionPayload struct {
@@ -24,6 +26,9 @@ type rollbackRevisionPayload struct {
 	ReplicaIndex         int                      `json:"replicaIndex"`
 	Instance             int                      `json:"instance,omitempty"`
 	ApplicationSlug      string                   `json:"applicationSlug,omitempty"`
+	ProjectSlug          string                   `json:"projectSlug,omitempty"`
+	EnvironmentSlug      string                   `json:"environmentSlug,omitempty"`
+	DNSAlias             string                   `json:"dnsAlias,omitempty"`
 	EnvironmentID        string                   `json:"environmentId,omitempty"`
 	Image                string                   `json:"image"`
 	ImageDigest          string                   `json:"imageDigest,omitempty"`
@@ -49,14 +54,18 @@ type rollbackRevisionPayload struct {
 	BuildContext string `json:"buildContext,omitempty"`
 }
 
+// executeRollback is the rollback seam. Tests replace it to observe Env.
+var executeRollback = func(ctx context.Context, cli *docker.Client, log *slog.Logger, spec rollback.RollbackSpec) (rollback.RollbackResult, error) {
+	netMgr := network.NewManager(cli)
+	volMgr := volume.NewManager(cli)
+	return rollback.NewExecutor(cli, netMgr, volMgr, log).Execute(ctx, spec)
+}
+
 // rollbackRevisionHandler executes the rollback primitive for OpRollbackRevision.
-func rollbackRevisionHandler(cli *docker.Client, log *slog.Logger) Handler {
+func rollbackRevisionHandler(cli *docker.Client, tr transport.Client, log *slog.Logger) Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-
-	netMgr := network.NewManager(cli)
-	volMgr := volume.NewManager(cli)
 
 	return HandlerFunc(func(ctx context.Context, payload map[string]any) (ExecutionResult, error) {
 		var p rollbackRevisionPayload
@@ -84,10 +93,19 @@ func rollbackRevisionHandler(cli *docker.Client, log *slog.Logger) Handler {
 		if strings.TrimSpace(p.Image) == "" {
 			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "image is required")
 		}
+		if alias := strings.TrimSpace(p.DNSAlias); alias != "" && !protocol.ValidDNSAlias(alias) {
+			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "dnsAlias must be a single DNS label")
+		}
 
 		if cli == nil {
 			return ExecutionResult{}, Errorf(ErrCodeDockerError, "docker client unavailable")
 		}
+
+		runtimeEnv, sensitive, runtimeErr := applyRevisionRuntime(ctx, tr, targetRev, p.Env)
+		if runtimeErr != nil {
+			return ExecutionResult{}, sanitizeRuntimeErr(runtimeErr, sensitive)
+		}
+		p.Env = runtimeEnv
 
 		var startupTimeout time.Duration
 		if p.StartupTimeout != "" {
@@ -143,6 +161,9 @@ func rollbackRevisionHandler(cli *docker.Client, log *slog.Logger) Handler {
 			ReplicaIndex:         p.ReplicaIndex,
 			Instance:             p.Instance,
 			ApplicationSlug:      p.ApplicationSlug,
+			ProjectSlug:          p.ProjectSlug,
+			EnvironmentSlug:      p.EnvironmentSlug,
+			DNSAlias:             strings.TrimSpace(p.DNSAlias),
 			EnvironmentID:        p.EnvironmentID,
 			Image:                p.Image,
 			ImageDigest:          p.ImageDigest,
@@ -167,13 +188,12 @@ func rollbackRevisionHandler(cli *docker.Client, log *slog.Logger) Handler {
 			BuildContext:         p.BuildContext,
 		}
 
-		executor := rollback.NewExecutor(cli, netMgr, volMgr, log)
-		res, err := executor.Execute(ctx, spec)
+		res, err := executeRollback(ctx, cli, log, spec)
 		if err != nil {
 			if errors.Is(err, rollback.ErrRebuildForbidden) || errors.Is(err, rollback.ErrTargetHealthFailed) {
-				return ExecutionResult{}, Errorf(ErrCodeValidation, "%v", err)
+				return ExecutionResult{}, sanitizeRuntimeErr(Errorf(ErrCodeValidation, "%v", err), sensitive)
 			}
-			return ExecutionResult{}, wrapDockerErr(err)
+			return ExecutionResult{}, sanitizeRuntimeErr(wrapDockerErr(err), sensitive)
 		}
 
 		return ExecutionResult{

@@ -1,21 +1,35 @@
 'use client'
 
 import { Plus, Trash2 } from 'lucide-react'
-import { useFieldArray, type Control, type FieldErrors, type UseFormRegister } from 'react-hook-form'
+import {
+  useFieldArray,
+  type Control,
+  type FieldErrors,
+  type UseFormRegister,
+  type UseFormWatch,
+} from 'react-hook-form'
 import { Button } from '@/components/ui/button'
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { isPersistedVariableKey } from '@/lib/applications/create-application-flow'
 import type { CreateApplicationValues } from '@/lib/validations/application'
 
 interface StepConfigurationProps {
   register: UseFormRegister<CreateApplicationValues>
   control: Control<CreateApplicationValues>
+  watch: UseFormWatch<CreateApplicationValues>
   errors: FieldErrors<CreateApplicationValues>
+  lockedKeys?: readonly string[]
 }
 
-export function StepConfiguration({ register, control, errors }: StepConfigurationProps) {
+export function StepConfiguration({
+  register,
+  control,
+  watch,
+  errors,
+  lockedKeys = [],
+}: StepConfigurationProps) {
   const envFields = useFieldArray({ control, name: 'envVars' })
-  const secretFields = useFieldArray({ control, name: 'secrets' })
 
   return (
     <FieldGroup>
@@ -23,7 +37,12 @@ export function StepConfiguration({ register, control, errors }: StepConfigurati
         <div className="flex items-center justify-between gap-2">
           <div>
             <FieldLabel>Environment variables</FieldLabel>
-            <FieldDescription>Plain configuration values injected at runtime.</FieldDescription>
+            <FieldDescription>
+              Plain configuration values injected at runtime.
+              {lockedKeys.length > 0
+                ? ' Saved variables stay as stored. Deploy retries only variables that are not saved yet.'
+                : ''}
+            </FieldDescription>
           </div>
           <Button
             type="button"
@@ -39,8 +58,10 @@ export function StepConfiguration({ register, control, errors }: StepConfigurati
           <p className="text-xs text-muted-foreground">No environment variables added.</p>
         ) : (
           <div className="flex flex-col gap-2">
-            {envFields.fields.map((field, index) => (
-              <div key={field.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+            {envFields.fields.map((field, index) => {
+              const locked = isPersistedVariableKey(lockedKeys, watch(`envVars.${index}.key`) ?? '')
+              return (
+                <div key={field.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
                 <Field data-invalid={Boolean(errors.envVars?.[index]?.key) || undefined}>
                   <Input
                     placeholder="KEY"
@@ -48,6 +69,7 @@ export function StepConfiguration({ register, control, errors }: StepConfigurati
                     aria-label={`Environment variable ${index + 1} key`}
                     aria-invalid={Boolean(errors.envVars?.[index]?.key)}
                     {...register(`envVars.${index}.key`)}
+                    readOnly={locked}
                   />
                   <FieldError>{errors.envVars?.[index]?.key?.message}</FieldError>
                 </Field>
@@ -57,6 +79,7 @@ export function StepConfiguration({ register, control, errors }: StepConfigurati
                     className="font-mono"
                     aria-label={`Environment variable ${index + 1} value`}
                     {...register(`envVars.${index}.value`)}
+                    readOnly={locked}
                   />
                 </Field>
                 <Button
@@ -65,63 +88,27 @@ export function StepConfiguration({ register, control, errors }: StepConfigurati
                   variant="ghost"
                   className="size-8"
                   onClick={() => envFields.remove(index)}
+                  disabled={locked}
                   aria-label={`Remove environment variable ${index + 1}`}
                 >
                   <Trash2 className="size-3.5" />
                 </Button>
-              </div>
-            ))}
+                </div>
+              )
+            })}
           </div>
         )}
         <FieldError>{typeof errors.envVars?.message === 'string' ? errors.envVars.message : null}</FieldError>
       </div>
 
-      <div className="flex flex-col gap-3 border-t border-border pt-4">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <FieldLabel>Secrets</FieldLabel>
-            <FieldDescription>Reference existing secrets by name. Values are never entered here.</FieldDescription>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => secretFields.append({ name: '' })}
-          >
-            <Plus data-icon="inline-start" />
-            Add
-          </Button>
-        </div>
-        {secretFields.fields.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No secret references added.</p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {secretFields.fields.map((field, index) => (
-              <div key={field.id} className="grid grid-cols-[1fr_auto] gap-2">
-                <Field data-invalid={Boolean(errors.secrets?.[index]?.name) || undefined}>
-                  <Input
-                    placeholder="SECRET_NAME"
-                    className="font-mono"
-                    aria-label={`Secret ${index + 1} name`}
-                    aria-invalid={Boolean(errors.secrets?.[index]?.name)}
-                    {...register(`secrets.${index}.name`)}
-                  />
-                  <FieldError>{errors.secrets?.[index]?.name?.message}</FieldError>
-                </Field>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="size-8"
-                  onClick={() => secretFields.remove(index)}
-                  aria-label={`Remove secret ${index + 1}`}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
+      <div className="flex flex-col gap-2 border-t border-border pt-4">
+        <FieldLabel>Secrets</FieldLabel>
+        <FieldDescription>
+          Secret values are not entered in this wizard and are not saved as environment variables.
+          Existing secrets in the organization, project, environment, and application scopes are
+          included when the revision is created. Add them in Security → Secrets before deploying
+          if this application needs them.
+        </FieldDescription>
       </div>
     </FieldGroup>
   )

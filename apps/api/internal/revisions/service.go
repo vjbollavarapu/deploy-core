@@ -6,17 +6,31 @@ import (
 	"strings"
 
 	"github.com/deploycore/deploy-core/apps/api/internal/rbac"
+	"github.com/deploycore/deploy-core/apps/api/internal/secrets"
 	"github.com/deploycore/deploy-core/apps/api/pkg/apierror"
 	"github.com/google/uuid"
 )
 
+type secretVersionSource interface {
+	GetByVersion(ctx context.Context, orgID uuid.UUID, scope, name string, version int, projectID, environmentID, applicationID *uuid.UUID) (secrets.Record, error)
+}
+
 type Service struct {
-	repo  Repository
-	authz *rbac.Authorizer
+	repo        Repository
+	authz       *rbac.Authorizer
+	secrets     secretVersionSource
+	platformKey []byte
 }
 
 func NewService(repo Repository, authz *rbac.Authorizer) *Service {
 	return &Service{repo: repo, authz: authz}
+}
+
+// WithRuntime enables agent runtime bootstrap. platformKey decrypts snapshotted secret versions.
+func (s *Service) WithRuntime(source secretVersionSource, platformKey []byte) *Service {
+	s.secrets = source
+	s.platformKey = platformKey
+	return s
 }
 
 func (s *Service) ListByApplication(ctx context.Context, actorID, applicationID uuid.UUID, status *string, limit, offset int) ([]Revision, int64, error) {

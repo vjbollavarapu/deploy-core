@@ -106,7 +106,8 @@ func stopContainerHandler(cli *docker.Client, log *slog.Logger) Handler {
 }
 
 type startContainerPayload struct {
-	ContainerID string `json:"containerId"`
+	ContainerID   string `json:"containerId"`
+	ContainerName string `json:"containerName,omitempty"`
 }
 
 func startContainerHandler(cli *docker.Client) Handler {
@@ -115,25 +116,30 @@ func startContainerHandler(cli *docker.Client) Handler {
 		if err := decodePayload(payload, &p); err != nil {
 			return ExecutionResult{}, err
 		}
-		if p.ContainerID == "" {
-			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "containerId is required")
+		target := strings.TrimSpace(p.ContainerID)
+		if target == "" {
+			target = strings.TrimSpace(p.ContainerName)
+		}
+		if target == "" {
+			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "containerId or containerName is required")
 		}
 		if cli == nil {
 			return ExecutionResult{}, Errorf(ErrCodeDockerError, "docker client unavailable")
 		}
 		// Idempotency: if container is already running, return success
-		if detail, err := cli.InspectContainer(ctx, p.ContainerID); err == nil && detail.State.Running {
-			return ExecutionResult{Output: map[string]any{"containerId": p.ContainerID, "started": true, "alreadyRunning": true}}, nil
+		if detail, err := cli.InspectContainer(ctx, target); err == nil && detail.State.Running {
+			return ExecutionResult{Output: map[string]any{"containerId": target, "started": true, "alreadyRunning": true}}, nil
 		}
-		if err := cli.StartContainer(ctx, p.ContainerID); err != nil {
+		if err := cli.StartContainer(ctx, target); err != nil {
 			return ExecutionResult{}, wrapDockerErr(err)
 		}
-		return ExecutionResult{Output: map[string]any{"containerId": p.ContainerID, "started": true}}, nil
+		return ExecutionResult{Output: map[string]any{"containerId": target, "started": true}}, nil
 	})
 }
 
 type restartContainerPayload struct {
 	ContainerID    string `json:"containerId"`
+	ContainerName  string `json:"containerName,omitempty"`
 	TimeoutSeconds int    `json:"timeoutSeconds"`
 }
 
@@ -143,8 +149,12 @@ func restartContainerHandler(cli *docker.Client) Handler {
 		if err := decodePayload(payload, &p); err != nil {
 			return ExecutionResult{}, err
 		}
-		if p.ContainerID == "" {
-			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "containerId is required")
+		target := strings.TrimSpace(p.ContainerID)
+		if target == "" {
+			target = strings.TrimSpace(p.ContainerName)
+		}
+		if target == "" {
+			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "containerId or containerName is required")
 		}
 		if cli == nil {
 			return ExecutionResult{}, Errorf(ErrCodeDockerError, "docker client unavailable")
@@ -153,10 +163,10 @@ func restartContainerHandler(cli *docker.Client) Handler {
 		if timeout <= 0 {
 			timeout = 10 * time.Second
 		}
-		if err := cli.RestartContainer(ctx, p.ContainerID, timeout); err != nil {
+		if err := cli.RestartContainer(ctx, target, timeout); err != nil {
 			return ExecutionResult{}, wrapDockerErr(err)
 		}
-		return ExecutionResult{Output: map[string]any{"containerId": p.ContainerID, "restarted": true}}, nil
+		return ExecutionResult{Output: map[string]any{"containerId": target, "restarted": true}}, nil
 	})
 }
 

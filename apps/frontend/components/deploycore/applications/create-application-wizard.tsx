@@ -48,6 +48,12 @@ import {
   type WireProject,
 } from '@/lib/api'
 import { useOrganization } from '@/lib/auth-context'
+import { isDemoModeEnabled } from '@/lib/mock-isolation'
+import {
+  CreateFlowError,
+  createApplicationWithVariables,
+  creationMode,
+} from '@/lib/applications/create-application-flow'
 
 const REVIEW_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'review')
 const DEPLOY_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'deploy')
@@ -131,6 +137,7 @@ export function CreateApplicationWizard({
   const [step, setStep] = useState(0)
   const [serverError, setServerError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const [savedApplication, setSavedApplication] = useState<{ id: string; savedKeys: string[] } | null>(null)
 
   const [projectsList, setProjectsList] = useState<PlacementProject[]>(fallbackProjects)
   const [serversList, setServersList] = useState<PlacementServer[]>(fallbackServers)
@@ -248,6 +255,7 @@ export function CreateApplicationWizard({
       setStep(0)
       setServerError(null)
       setPending(false)
+      setSavedApplication(null)
       reset({
         ...DEFAULT_APPLICATION_VALUES,
         ...(defaultProjectId ? { projectId: defaultProjectId } : {}),
@@ -318,7 +326,17 @@ export function CreateApplicationWizard({
       )
       const environmentId = selectedEnv?.id || data.environment
 
-      if (activeOrg?.id && isUUID(activeOrg.id) && isUUID(data.projectId) && isUUID(environmentId)) {
+      const hasControlPlaneIds = Boolean(
+        activeOrg?.id && isUUID(activeOrg.id) && isUUID(data.projectId) && isUUID(environmentId),
+      )
+      const mode = creationMode(hasControlPlaneIds, isDemoModeEnabled())
+
+      if (mode === 'blocked') {
+        setServerError('Select a project, environment, and server from the control plane before deploying.')
+        return
+      }
+
+      if (mode === 'api' && activeOrg?.id) {
         const appPayload = {
           organizationId: activeOrg.id,
           projectId: data.projectId,
@@ -352,19 +370,18 @@ export function CreateApplicationWizard({
           },
         }
 
-        const createRes = await apiClient.post<{ application: { id: string } }>(
-          '/applications',
-          appPayload,
-        )
-
-        const appId = createRes.application?.id
-        if (appId) {
-          await apiClient.post(`/applications/${appId}/deployments`, {
-            trigger: 'manual',
-          })
-        }
+        await createApplicationWithVariables(apiClient, {
+          organizationId: activeOrg.id,
+          applicationBody: appPayload,
+          envVars: data.envVars,
+          resume: savedApplication
+            ? {
+                applicationId: savedApplication.id,
+                savedKeys: savedApplication.savedKeys,
+              }
+            : undefined,
+        })
       } else {
-        // Fallback simulation for offline/preview environments with mock string identifiers
         await new Promise((resolve) => setTimeout(resolve, 600))
       }
 
@@ -372,13 +389,21 @@ export function CreateApplicationWizard({
       onSuccess?.()
       handleOpenChange(false)
     } catch (err) {
-      if (err instanceof ApiError) {
-        setServerError(err.message)
-        toast.error(err.message)
-      } else {
-        setServerError(
-          err instanceof Error ? err.message : 'Unable to create application. Please try again.',
-        )
+      if (err instanceof CreateFlowError && err.applicationId) {
+        setSavedApplication({
+          id: err.applicationId,
+          savedKeys: err.savedKeys,
+        })
+      }
+      const message =
+        err instanceof CreateFlowError || err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Unable to create application. Please try again.'
+      setServerError(message)
+      if (err instanceof CreateFlowError || err instanceof ApiError) {
+        toast.error(message)
       }
     } finally {
       setPending(false)
@@ -424,7 +449,15 @@ export function CreateApplicationWizard({
           {step === 0 && <StepSource setValue={setValue} watch={watch} errors={errors} />}
           {step === 1 && <StepSourceConfig register={register} watch={watch} errors={errors} />}
           {step === 2 && <StepRuntime register={register} control={control} errors={errors} />}
-          {step === 3 && <StepConfiguration register={register} control={control} errors={errors} />}
+          {step === 3 && (
+            <StepConfiguration
+              register={register}
+              control={control}
+              watch={watch}
+              errors={errors}
+              lockedKeys={savedApplication?.savedKeys ?? []}
+            />
+          )}
           {step === 4 && <StepNetworking register={register} errors={errors} />}
           {step === 5 && (
             <StepPlacement

@@ -658,3 +658,81 @@ func specWithHealth(ht HealthCheckType) CandidateSpec {
 	s.HealthPolicy.Type = ht
 	return s
 }
+
+func TestStartCandidate_PrivateNetworkAliasAndProjectSlug(t *testing.T) {
+	mock := newMockDockerClient()
+	mock.images["redis:7-alpine"] = docker.ImageDetail{ID: "sha256:img", RepoTags: []string{"redis:7-alpine"}}
+	mgr := NewManager(mock, network.NewManager(mock), volume.NewManager(mock), nil)
+
+	spec := validSpec()
+	spec.Metadata.ProjectSlug = "modulyn"
+	spec.Metadata.EnvironmentSlug = "production"
+	spec.DNSAlias = "redis"
+	spec.Networks = []NetworkSpec{
+		{Name: "dc-modulyn-production-private"},
+		{Name: protocol.ProxyNetworkName},
+	}
+	if _, err := mgr.StartCandidate(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if mock.lastCreatedReq == nil {
+		t.Fatal("container was not created")
+	}
+	aliases := mock.lastCreatedReq.NetworkAliases["dc-modulyn-production-private"]
+	if len(aliases) != 1 || aliases[0] != "redis" {
+		t.Fatalf("private aliases = %#v", mock.lastCreatedReq.NetworkAliases)
+	}
+	if _, ok := mock.lastCreatedReq.NetworkAliases[protocol.ProxyNetworkName]; ok {
+		t.Fatal("alias leaked onto deploycore-proxy")
+	}
+	for _, n := range mock.lastCreatedReq.Networks {
+		if n == protocol.ProxyNetworkName {
+			t.Fatal("candidate joined deploycore-proxy")
+		}
+	}
+	detail := mock.networks["dc-modulyn-production-private"]
+	if detail.Labels[protocol.LabelProjectSlug] != "modulyn" {
+		t.Fatalf("project slug label = %q", detail.Labels[protocol.LabelProjectSlug])
+	}
+	if detail.Labels[protocol.LabelProjectSlug] == spec.Metadata.AppShortID {
+		t.Fatal("project slug label used the application slug")
+	}
+}
+
+func TestStartCandidate_MountsSnapshottedVolume(t *testing.T) {
+	mock := newMockDockerClient()
+	mock.images["redis:7-alpine"] = docker.ImageDetail{ID: "sha256:img", RepoTags: []string{"redis:7-alpine"}}
+	mgr := NewManager(mock, network.NewManager(mock), volume.NewManager(mock), nil)
+	spec := validSpec()
+	spec.Metadata.ProjectSlug = "modulyn"
+	spec.Metadata.EnvironmentSlug = "production"
+	spec.DNSAlias = "redis"
+	spec.Networks = []NetworkSpec{{Name: "dc-modulyn-production-private"}}
+	spec.Volumes = []VolumeSpec{{Name: "redis-data", ContainerPath: "/data", ReadOnly: false}}
+	if _, err := mgr.StartCandidate(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if mock.lastCreatedReq == nil || len(mock.lastCreatedReq.Volumes) != 1 {
+		t.Fatalf("volumes = %#v", mock.lastCreatedReq)
+	}
+	vol := mock.lastCreatedReq.Volumes[0]
+	if vol.VolumeName != "redis-data" || vol.MountPath != "/data" || vol.ReadOnly {
+		t.Fatalf("mount = %#v", vol)
+	}
+	if mock.lastCreatedReq.NetworkAliases["dc-modulyn-production-private"][0] != "redis" {
+		t.Fatal("volume mount dropped the private DNS alias")
+	}
+	created := mock.volumes["redis-data"]
+	if created.Labels["deploycore.managed"] != "true" {
+		t.Fatalf("volume labels = %#v", created.Labels)
+	}
+
+	spec.Volumes = []VolumeSpec{{Name: "redis-config", ContainerPath: "/etc/redis", ReadOnly: true}}
+	if _, err := mgr.StartCandidate(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	ro := mock.lastCreatedReq.Volumes[0]
+	if ro.VolumeName != "redis-config" || ro.MountPath != "/etc/redis" || !ro.ReadOnly {
+		t.Fatalf("read-only mount = %#v", ro)
+	}
+}

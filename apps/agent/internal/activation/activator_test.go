@@ -333,6 +333,44 @@ func TestActivator_Activate_RetentionPolicyRemove(t *testing.T) {
 	}
 }
 
+func TestActivator_SkipsProxyWhenUnset(t *testing.T) {
+	client := newMockDockerClient()
+	client.containers["cand-123"] = docker.ContainerDetail{
+		ID:    "cand-123",
+		Name:  "dc-redis-r1-1",
+		State: docker.ContainerState{Running: true},
+	}
+	client.containers["old-100"] = docker.ContainerDetail{
+		ID:    "old-100",
+		Name:  "dc-redis-r0-1",
+		State: docker.ContainerState{Running: true},
+	}
+	activator := NewActivator(client, nil, nil)
+	res, err := activator.Activate(context.Background(), ActivationSpec{
+		CandidateContainerID: "cand-123",
+		OldContainerID:       "old-100",
+		StopTimeout:          time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "ACTIVATED" {
+		t.Fatalf("status = %s", res.Status)
+	}
+	if len(client.connected["deploycore-proxy"]) != 0 {
+		t.Fatalf("proxy connections = %#v", client.connected)
+	}
+	stopped := false
+	for _, id := range client.stopped {
+		if id == "old-100" {
+			stopped = true
+		}
+	}
+	if !stopped {
+		t.Fatal("rolling stop of the previous container did not run")
+	}
+}
+
 func TestDefaultRouteProber_SuccessAndFailure(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/ok" {

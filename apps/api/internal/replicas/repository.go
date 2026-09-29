@@ -32,6 +32,7 @@ type Repository interface {
 	GetLatestConfigRuntime(ctx context.Context, appID uuid.UUID) (map[string]any, ConfigMeta, error)
 	InsertConfigVersion(ctx context.Context, orgID, appID, actorID uuid.UUID, runtime map[string]any) error
 	GetRestartPolicy(ctx context.Context, appID uuid.UUID) (string, error)
+	HasWritableApplicationVolume(ctx context.Context, appID uuid.UUID) (bool, error)
 }
 
 type UpsertInput struct {
@@ -300,6 +301,31 @@ func (r *PostgresRepository) GetRestartPolicy(ctx context.Context, appID uuid.UU
 		return "unless-stopped", nil
 	}
 	return policy, nil
+}
+
+func (r *PostgresRepository) HasWritableApplicationVolume(ctx context.Context, appID uuid.UUID) (bool, error) {
+	var writable bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM volumes v
+			JOIN applications a ON a.id = v.attached_resource_id
+			WHERE v.attached_resource_type = 'application'
+			  AND v.attached_resource_id = $1
+			  AND v.deleted_at IS NULL
+			  AND v.server_id = a.target_server_id
+			  AND COALESCE(v.labels->>'readOnly', 'false') NOT IN ('true', '1')
+			  AND v.mount_path <> ''
+		) OR EXISTS (
+			SELECT 1 FROM revisions r
+			WHERE r.application_id = $1 AND r.status = 'ACTIVE'
+			  AND EXISTS (
+				SELECT 1 FROM jsonb_array_elements(COALESCE(r.effective_config->'volumeMounts', '[]'::jsonb)) m
+				WHERE COALESCE(m->>'readOnly', 'false') NOT IN ('true', '1')
+				  AND COALESCE(m->>'name', '') <> ''
+				  AND COALESCE(m->>'mountPath', '') <> ''
+			  )
+		)`, appID).Scan(&writable)
+	return writable, err
 }
 
 func (r *PostgresRepository) DeleteAboveIndex(ctx context.Context, appID uuid.UUID, maxIndexExclusive int) (int64, error) {

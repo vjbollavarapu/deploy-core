@@ -79,9 +79,6 @@ func (e *Executor) Execute(ctx context.Context, spec RollbackSpec) (RollbackResu
 	}
 
 	proxyNetwork := strings.TrimSpace(spec.ProxyNetwork)
-	if proxyNetwork == "" {
-		proxyNetwork = "deploycore-proxy"
-	}
 
 	instance := spec.Instance
 	if instance < 1 {
@@ -115,14 +112,16 @@ func (e *Executor) Execute(ctx context.Context, spec RollbackSpec) (RollbackResu
 
 	// Prepare metadata for candidate
 	meta := appcontainer.Metadata{
-		OrganizationID: orgID,
-		ApplicationID:  spec.ApplicationID,
-		EnvironmentID:  envID,
-		DeploymentID:   depID,
-		RevisionID:     spec.TargetRevisionID,
-		Instance:       instance,
-		AppShortID:     appSlug,
-		IsCandidate:    true,
+		OrganizationID:  orgID,
+		ApplicationID:   spec.ApplicationID,
+		EnvironmentID:   envID,
+		DeploymentID:    depID,
+		RevisionID:      spec.TargetRevisionID,
+		Instance:        instance,
+		AppShortID:      appSlug,
+		ProjectSlug:     spec.ProjectSlug,
+		EnvironmentSlug: spec.EnvironmentSlug,
+		IsCandidate:     true,
 	}
 
 	expectedContainerName, _ := appcontainer.FormatName(meta.AppShortID, meta.RevisionID, meta.Instance)
@@ -132,6 +131,7 @@ func (e *Executor) Execute(ctx context.Context, spec RollbackSpec) (RollbackResu
 		Image:          imageRef,
 		PullPolicy:     candidate.PullIfNotPresent,
 		Networks:       spec.Networks,
+		DNSAlias:       spec.DNSAlias,
 		Volumes:        spec.Volumes,
 		InternalPorts:  spec.InternalPorts,
 		CPUMillis:      spec.CPUMillis,
