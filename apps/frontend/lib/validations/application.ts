@@ -109,7 +109,7 @@ export const networkingStepSchema = z.object({
     .optional()
     .or(z.literal(''))
     .refine((value) => !value || /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value), 'Enter a valid domain'),
-  healthCheckPath: z.string().trim().min(1, 'Health check path is required'),
+  healthCheckPath: z.string().trim(),
   healthCheckPort: z.coerce
     .number()
     .int()
@@ -153,7 +153,7 @@ export const createApplicationSchema = z
       .optional()
       .or(z.literal(''))
       .refine((value) => !value || /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(value), 'Enter a valid domain'),
-    healthCheckPath: z.string().min(1),
+    healthCheckPath: z.string().trim(),
     healthCheckPort: z.coerce.number().int().min(1).max(65535),
     name: z
       .string()
@@ -216,6 +216,24 @@ export const DEFAULT_APPLICATION_VALUES: CreateApplicationValues = {
   projectId: '',
   environment: '',
   serverId: '',
+}
+
+/** Blank path disables HTTP health checks. A configured path is sent unchanged. */
+export function healthCheckRequest(
+  path: string,
+  port: number,
+): { enabled: false } | { path: string; port: number } {
+  const trimmed = path.trim()
+  if (!trimmed) {
+    return { enabled: false }
+  }
+  return { path: trimmed, port }
+}
+
+export function healthCheckSummary(path: string, port: number): string {
+  const trimmed = path.trim()
+  if (!trimmed) return 'Disabled'
+  return `${trimmed} :${port}`
 }
 
 export function sourceTypeLabel(type: SourceType): string {

@@ -43,3 +43,34 @@ func TestHealthHandlers_ValidationAndDispatch(t *testing.T) {
 		t.Fatalf("expected ErrCodeDockerError, got %v", err)
 	}
 }
+
+func TestHealthHandler_SkipsHTTPWhenDisabled(t *testing.T) {
+	nilReg := buildRegistry(nil, nil, nil, "", nil, nil)
+	handler := nilReg[protocol.OpRunHealthCheck]
+
+	res, err := handler.Execute(context.Background(), map[string]any{
+		"containerName": "redis",
+		"probeType":     "HTTP",
+		"port":          6379,
+		"enabled":       false,
+	})
+	if err != nil {
+		t.Fatalf("disabled health check returned error: %v", err)
+	}
+	if res.Output["skipped"] != true || res.Output["healthy"] != true {
+		t.Fatalf("expected skipped healthy result, got %#v", res.Output)
+	}
+
+	blank, err := handler.Execute(context.Background(), map[string]any{
+		"containerName": "redis",
+		"probeType":     "HTTP",
+		"port":          6379,
+		"path":          "  ",
+	})
+	if err != nil {
+		t.Fatalf("blank HTTP path returned error: %v", err)
+	}
+	if blank.Output["skipped"] != true {
+		t.Fatalf("blank HTTP path was not skipped: %#v", blank.Output)
+	}
+}

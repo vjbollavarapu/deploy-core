@@ -238,6 +238,109 @@ func TestApplicationLifecycle(t *testing.T) {
 	}
 }
 
+func TestApplicationAcceptsDisabledHTTPHealthCheck(t *testing.T) {
+	pool := testPool(t)
+	cfg := config.Config{
+		Env:                   "test",
+		AuthTokenSecret:       "test-secret-0123456789abcdef01234567",
+		AccessTokenTTL:        time.Minute,
+		RefreshTokenTTL:       time.Hour,
+		AuthRateLimitPerMin:   1000,
+		CORSAllowedOrigins:    []string{"*"},
+		AuthMinPasswordLength: 8,
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := server.New(cfg, log, pool)
+	token := register(t, srv, "redis-owner@example.com", "password123", "Owner")
+	orgID := createOrg(t, srv, token, "Redis Org", "redis-org")
+	projectID := createProject(t, srv, token, orgID, "Platform", "platform")
+	envID := createEnvironment(t, srv, token, projectID, "Production", "production")
+	serverID := createServer(t, srv, token, orgID, "oci-lv-b")
+
+	body, _ := json.Marshal(map[string]any{
+		"environmentId":  envID,
+		"name":           "Redis",
+		"slug":           "redis",
+		"type":           "DOCKER_IMAGE",
+		"targetServerId": serverID,
+		"config": map[string]any{
+			"sourceType":     "image",
+			"imageReference": "redis:7-alpine",
+			"internalPort":   6379,
+			"healthCheck":    map[string]any{"enabled": false},
+		},
+	})
+	rec := doJSON(t, srv, http.MethodPost, "/api/v1/applications", body, token)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Application struct {
+			Config struct {
+				InternalPort *int           `json:"internalPort"`
+				HealthCheck  map[string]any `json:"healthCheck"`
+			} `json:"config"`
+		} `json:"application"`
+	}
+	decode(t, rec, &created)
+	if created.Application.Config.InternalPort == nil || *created.Application.Config.InternalPort != 6379 {
+		t.Fatalf("internalPort=%v", created.Application.Config.InternalPort)
+	}
+	enabled, ok := created.Application.Config.HealthCheck["enabled"].(bool)
+	if !ok || enabled {
+		t.Fatalf("healthCheck=%#v", created.Application.Config.HealthCheck)
+	}
+	if path, ok := created.Application.Config.HealthCheck["path"]; ok && path != "" {
+		t.Fatalf("disabled health check stored path %#v", path)
+	}
+
+	httpBody, _ := json.Marshal(map[string]any{
+		"environmentId":  envID,
+		"name":           "API",
+		"slug":           "api",
+		"type":           "API",
+		"targetServerId": serverID,
+		"config": map[string]any{
+			"sourceType":     "image",
+			"imageReference": "ghcr.io/example/api:1",
+			"internalPort":   8080,
+			"healthCheck":    map[string]any{"type": "HTTP", "path": "/healthz", "port": 8080},
+		},
+	})
+	httpRec := doJSON(t, srv, http.MethodPost, "/api/v1/applications", httpBody, token)
+	if httpRec.Code != http.StatusCreated {
+		t.Fatalf("http create status=%d body=%s", httpRec.Code, httpRec.Body.String())
+	}
+	var httpCreated struct {
+		Application struct {
+			Config struct {
+				HealthCheck map[string]any `json:"healthCheck"`
+			} `json:"config"`
+		} `json:"application"`
+	}
+	decode(t, httpRec, &httpCreated)
+	if httpCreated.Application.Config.HealthCheck["path"] != "/healthz" {
+		t.Fatalf("configured health check = %#v", httpCreated.Application.Config.HealthCheck)
+	}
+
+	badBody, _ := json.Marshal(map[string]any{
+		"environmentId": envID,
+		"name":          "Bad Health",
+		"slug":          "bad-health",
+		"type":          "API",
+		"config": map[string]any{
+			"sourceType":     "image",
+			"imageReference": "ghcr.io/example/api:1",
+			"internalPort":   8080,
+			"healthCheck":    map[string]any{"type": "HTTP", "path": "healthz"},
+		},
+	})
+	bad := doJSON(t, srv, http.MethodPost, "/api/v1/applications", badBody, token)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("invalid HTTP path status=%d body=%s", bad.Code, bad.Body.String())
+	}
+}
+
 func register(t *testing.T, srv *server.Server, email, password, name string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"email": email, "password": password, "displayName": name})

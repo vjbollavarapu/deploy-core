@@ -155,10 +155,14 @@ func Normalize(p Policy) (Policy, error) {
 	}
 	switch p.Type {
 	case TypeHTTP:
-		if strings.TrimSpace(p.Path) == "" {
-			p.Path = "/healthz"
-		}
-		if !strings.HasPrefix(p.Path, "/") {
+		p.Path = strings.TrimSpace(p.Path)
+		if p.Path == "" {
+			// A blank path with health checking turned off must stay blank.
+			// Enabled HTTP policies with no path keep the historical default.
+			if p.IsEnabled() {
+				p.Path = "/healthz"
+			}
+		} else if !strings.HasPrefix(p.Path, "/") {
 			return Policy{}, fmt.Errorf("path must start with /")
 		}
 		if p.ExpectedStatus == 0 {

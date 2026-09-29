@@ -30,6 +30,40 @@ func TestParsePolicyDefaultsAndTypes(t *testing.T) {
 	}
 }
 
+func TestParsePolicyDisabledHTTPDoesNotInventPath(t *testing.T) {
+	disabled, err := healthchecks.ParsePolicy(map[string]any{"enabled": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.IsEnabled() {
+		t.Fatal("enabled=false must disable probing")
+	}
+	if disabled.Path != "" {
+		t.Fatalf("disabled policy invented path %q", disabled.Path)
+	}
+
+	httpOff, err := healthchecks.ParsePolicy(map[string]any{"type": "HTTP", "enabled": false, "port": 6379})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if httpOff.IsEnabled() || httpOff.Type != healthchecks.TypeHTTP || httpOff.Path != "" {
+		t.Fatalf("disabled HTTP policy = %#v", httpOff)
+	}
+	if !healthchecks.ReadyForActivation(httpOff, healthchecks.StateUnknown) {
+		t.Fatal("disabled HTTP health check must not block activation")
+	}
+
+	httpOn, err := healthchecks.ParsePolicy(map[string]any{
+		"type": "HTTP", "path": "/healthz", "port": 8080,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !httpOn.IsEnabled() || httpOn.Path != "/healthz" || httpOn.Port == nil || *httpOn.Port != 8080 {
+		t.Fatalf("configured HTTP policy changed: %#v", httpOn)
+	}
+}
+
 func TestNextStateAndActivationGate(t *testing.T) {
 	if got := healthchecks.NextState(3, 0, 3, 3, healthchecks.StateStarting); got != healthchecks.StateHealthy {
 		t.Fatalf("got %s", got)

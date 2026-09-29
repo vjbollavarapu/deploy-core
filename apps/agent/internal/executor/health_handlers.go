@@ -32,6 +32,9 @@ func runHealthCheckHandler(cli *docker.Client) Handler {
 		if err := decodePayload(payload, &p); err != nil {
 			return ExecutionResult{}, err
 		}
+		if enabled, ok := payload["enabled"].(bool); ok && !enabled {
+			return skippedHealthResult(p.ProbeType), nil
+		}
 
 		target := strings.TrimSpace(p.ContainerID)
 		if target == "" {
@@ -39,6 +42,10 @@ func runHealthCheckHandler(cli *docker.Client) Handler {
 		}
 		if target == "" {
 			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "containerId or containerName is required")
+		}
+		// A blank HTTP path means probing is off. Do not substitute "/".
+		if strings.EqualFold(strings.TrimSpace(p.ProbeType), string(health.TypeHTTP)) && strings.TrimSpace(p.Path) == "" {
+			return skippedHealthResult(p.ProbeType), nil
 		}
 
 		if cli == nil {
@@ -119,4 +126,17 @@ func runHealthCheckHandler(cli *docker.Client) Handler {
 
 		return ExecutionResult{Output: output}, nil
 	})
+}
+
+func skippedHealthResult(probeType string) ExecutionResult {
+	probeType = strings.TrimSpace(probeType)
+	if probeType == "" {
+		probeType = string(health.TypeHTTP)
+	}
+	return ExecutionResult{Output: map[string]any{
+		"healthy":   true,
+		"skipped":   true,
+		"probeType": probeType,
+		"summary":   "HTTP health check disabled",
+	}}
 }

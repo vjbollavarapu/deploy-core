@@ -8,6 +8,7 @@ import { getDemoFixtures } from '@/lib/mock-isolation'
 const mockProjects = getDemoFixtures(rawMockProjects)
 const mockServers = getDemoFixtures(rawMockServers)
 import {
+  healthCheckSummary,
   sourceTypeLabel,
   type CreateApplicationValues,
 } from '@/lib/validations/application'
@@ -100,7 +101,7 @@ export function StepReview({ values, projects = [], servers = [] }: StepReviewPr
               { label: 'Domain', value: values.domain || 'None' },
               {
                 label: 'Health check',
-                value: `${values.healthCheckPath} :${values.healthCheckPort}`,
+                value: healthCheckSummary(values.healthCheckPath, values.healthCheckPort),
               },
             ]}
           />
@@ -193,7 +194,7 @@ export function StepDeploy({ values, pending, projects = [], servers = [] }: Ste
             <span className="text-foreground">
               Port {values.port}
               {values.domain ? ` · ${values.domain}` : ''}
-              {` · Health: ${values.healthCheckPath}:${values.healthCheckPort}`}
+              {` · Health: ${healthCheckSummary(values.healthCheckPath, values.healthCheckPort)}`}
             </span>
           </div>
         </div>

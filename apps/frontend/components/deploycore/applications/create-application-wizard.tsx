@@ -23,6 +23,7 @@ const mockServers = getDemoFixtures(rawMockServers)
 import {
   createApplicationSchema,
   DEFAULT_APPLICATION_VALUES,
+  healthCheckRequest,
   WIZARD_STEPS,
   type CreateApplicationValues,
 } from '@/lib/validations/application'
@@ -362,10 +363,7 @@ export function CreateApplicationWizard({
             cpuLimitMillis: Math.round(data.cpu * 1000),
             memoryLimitBytes: data.memoryMb * 1024 * 1024,
             restartPolicy: data.restartPolicy,
-            healthCheck: {
-              path: data.healthCheckPath,
-              port: data.healthCheckPort,
-            },
+            healthCheck: healthCheckRequest(data.healthCheckPath, data.healthCheckPort),
             runtimeConfig: {},
           },
         }

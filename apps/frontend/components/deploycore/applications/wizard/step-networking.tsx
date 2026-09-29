@@ -35,6 +35,7 @@ export function StepNetworking({ register, errors }: StepNetworkingProps) {
             aria-invalid={Boolean(errors.healthCheckPath)}
             {...register('healthCheckPath')}
           />
+          <FieldDescription>Optional. Leave blank to disable HTTP health checks.</FieldDescription>
           <FieldError>{errors.healthCheckPath?.message}</FieldError>
         </Field>
         <Field data-invalid={Boolean(errors.healthCheckPort) || undefined}>
