@@ -159,7 +159,10 @@ func (c *HTTPClient) doRequest(ctx context.Context, method, path string, body []
 	return c.httpClient.Do(req)
 }
 
-// PollCommands polls the Control Plane for pending commands using long-polling with exponential backoff and jitter.
+// PollCommands fetches the current pending-command batch. The control plane
+// returns immediately, including HTTP 200 with an empty list and HTTP 204.
+// Transient transport failures retry with exponential backoff and jitter.
+// Idle pacing of successful empty polls is the caller's responsibility.
 func (c *HTTPClient) PollCommands(ctx context.Context) ([]protocol.CommandEnvelope, error) {
 	baseDelay := c.backoff.BaseDelay
 	if baseDelay <= 0 {

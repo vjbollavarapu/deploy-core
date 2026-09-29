@@ -19,7 +19,9 @@ type Client interface {
 	// Connect establishes the connection (or starts polling).
 	Connect(ctx context.Context) error
 
-	// PollCommands blocks until commands are received or context is cancelled.
+	// PollCommands fetches the current pending-command batch. The batch may be
+	// empty. Implementations return when the control plane responds or when
+	// ctx is cancelled. Callers pace successful empty polls.
 	PollCommands(ctx context.Context) ([]protocol.CommandEnvelope, error)
 
 	// SendCommandStatus sends the execution status of a command back to the control plane.

@@ -21,6 +21,15 @@ const (
 	DefaultConcurrency = 4
 	// pruneInterval controls how often expired journal entries are cleaned up.
 	pruneInterval = 10 * time.Minute
+	// IdlePollInterval is the delay after a successful command poll that returns
+	// no work. GET /api/v1/agents/commands responds immediately, including when
+	// the batch is empty, so the executor paces those polls here. A batch that
+	// contains commands is dispatched first, and the next poll follows at once.
+	IdlePollInterval = 2 * time.Second
+	// initialPollBackoff is the first delay after a transport or API poll error.
+	initialPollBackoff = time.Second
+	// maxPollBackoff caps exponential poll-error backoff.
+	maxPollBackoff = 30 * time.Second
 )
 
 // Config holds tunable executor parameters.
@@ -150,14 +159,12 @@ func (e *Executor) runLoop(ctx context.Context) {
 			e.log.Error("poll error", slog.String("error", err.Error()))
 			// Back off on poll failures (including terminal auth) to avoid hot-loop (I8).
 			if pollBackoff == 0 {
-				pollBackoff = time.Second
+				pollBackoff = initialPollBackoff
 			}
-			select {
-			case <-ctx.Done():
+			if !waitOrDone(ctx, pollBackoff) {
 				return
-			case <-time.After(pollBackoff):
 			}
-			if pollBackoff < 30*time.Second {
+			if pollBackoff < maxPollBackoff {
 				pollBackoff *= 2
 			}
 			continue
@@ -172,6 +179,25 @@ func (e *Executor) runLoop(ctx context.Context) {
 				e.dispatchCommand(ctx, cmd)
 			}
 		}
+		// Empty 200/204 is success. Without this wait the loop calls PollCommands
+		// again immediately and the agent floods the control plane.
+		if len(cmds) == 0 {
+			if !waitOrDone(ctx, IdlePollInterval) {
+				return
+			}
+		}
+	}
+}
+
+// waitOrDone waits for d or returns false when ctx is cancelled.
+func waitOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
