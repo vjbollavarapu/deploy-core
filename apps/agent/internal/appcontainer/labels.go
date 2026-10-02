@@ -23,6 +23,7 @@ type Metadata struct {
 	EnvironmentID   string
 	DeploymentID    string
 	RevisionID      string
+	RevisionNumber  int // durable numeric revision used only for the Docker name
 	Instance        int
 	AppShortID      string // application slug
 	ProjectSlug     string // project slug for private-network ownership labels

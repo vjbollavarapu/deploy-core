@@ -14,6 +14,13 @@ func TestFormatName_StandardCases(t *testing.T) {
 		expected   string
 	}{
 		{
+			name:       "redis revision 1 instance 1",
+			appShortID: "redis",
+			revision:   "1",
+			instance:   1,
+			expected:   "dc-redis-r1-1",
+		},
+		{
 			name:       "prompt example dc-dayaapi-r49-1",
 			appShortID: "dayaapi",
 			revision:   "49",
@@ -68,6 +75,7 @@ func TestFormatName_ValidationErrors(t *testing.T) {
 		{"traversal slug", "../escape", "49", 1},
 		{"space in slug", "daya api", "49", 1},
 		{"empty revision", "api", "", 1},
+		{"revision uuid", "redis", "4268d1fc-6522-411b-9568-7ee30a59fd1e", 1},
 		{"invalid chars in revision", "api", "49; rm -rf", 1},
 		{"zero instance", "api", "49", 0},
 		{"negative instance", "api", "49", -1},

@@ -21,6 +21,15 @@ var (
 	ErrInvalidInstance = errors.New("invalid instance index (must be >= 1)")
 )
 
+// NameRevisionToken is the decimal revision token passed to FormatName.
+// revisionNumber is the durable application revision number, never a UUID.
+func NameRevisionToken(revisionNumber int) (string, error) {
+	if revisionNumber < 1 {
+		return "", fmt.Errorf("%w: revisionNumber must be a positive integer", ErrInvalidRevision)
+	}
+	return strconv.Itoa(revisionNumber), nil
+}
+
 // Regex patterns for platform container naming
 var (
 	// appSlugRE ensures the short-id is DNS-safe lowercase alphanumeric and hyphens.

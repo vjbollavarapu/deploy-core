@@ -60,6 +60,7 @@ func TestRollbackRevisionHandler_NilDockerFails(t *testing.T) {
 	_, err := h.Execute(context.Background(), map[string]any{
 		"applicationId":    "app-1",
 		"targetRevisionId": "rev-1",
+		"revisionNumber":   1,
 		"image":            "app:v1",
 	})
 	if err == nil {
@@ -78,6 +79,7 @@ func TestDeployRevisionHandler_DelegatesToRollbackOnTrigger(t *testing.T) {
 		"trigger":          "rollback",
 		"applicationId":    "app-1",
 		"targetRevisionId": "rev-prev",
+		"revisionNumber":   1,
 		"image":            "app:v1",
 	})
 	if err == nil {

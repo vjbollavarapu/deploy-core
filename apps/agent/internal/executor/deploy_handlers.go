@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"regexp"
 	"strings"
 	"time"
 
@@ -16,8 +15,6 @@ import (
 	"github.com/deploycore/deploy-core/apps/agent/internal/volume"
 	"github.com/deploycore/deploy-core/packages/protocol-go"
 )
-
-var slugSafeRE = regexp.MustCompile(`[^a-z0-9\-]+`)
 
 // candidateVolumePayload represents a volume mount in deployment instructions.
 type candidateVolumePayload struct {
@@ -34,6 +31,7 @@ type deployRevisionPayload struct {
 	ApplicationID   string                   `json:"applicationId"`
 	DeploymentID    string                   `json:"deploymentId"`
 	RevisionID      string                   `json:"revisionId"`
+	RevisionNumber  int                      `json:"revisionNumber"`
 	ReplicaIndex    int                      `json:"replicaIndex"`
 	Instance        int                      `json:"instance,omitempty"`
 	ApplicationSlug string                   `json:"applicationSlug,omitempty"`
@@ -93,6 +91,9 @@ func deployRevisionHandler(cli *docker.Client, tr transport.Client, log *slog.Lo
 		if alias := strings.TrimSpace(p.DNSAlias); alias != "" && !protocol.ValidDNSAlias(alias) {
 			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "dnsAlias must be a single DNS label")
 		}
+		if p.RevisionNumber < 1 {
+			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "revisionNumber must be a positive integer")
+		}
 
 		if cli == nil {
 			return ExecutionResult{}, Errorf(ErrCodeDockerError, "docker client unavailable")
@@ -128,18 +129,11 @@ func deployRevisionHandler(cli *docker.Client, tr transport.Client, log *slog.Lo
 			}
 		}
 
-		// Sanitize application slug for container naming standard
-		appSlug := strings.ToLower(strings.TrimSpace(p.ApplicationSlug))
-		if appSlug == "" {
-			appSlug = strings.ToLower(strings.TrimSpace(p.ApplicationID))
+		rawSlug := strings.TrimSpace(p.ApplicationSlug)
+		if rawSlug == "" {
+			rawSlug = strings.TrimSpace(p.ApplicationID)
 		}
-		appSlug = slugSafeRE.ReplaceAllString(appSlug, "")
-		if len(appSlug) > 30 {
-			appSlug = appSlug[:30]
-		}
-		if appSlug == "" {
-			appSlug = "app"
-		}
+		appSlug := protocol.SanitizeApplicationSlug(rawSlug)
 
 		// Parse startup timeout
 		var startupTimeout time.Duration
@@ -184,6 +178,7 @@ func deployRevisionHandler(cli *docker.Client, tr transport.Client, log *slog.Lo
 				EnvironmentID:   p.EnvironmentID,
 				DeploymentID:    p.DeploymentID,
 				RevisionID:      p.RevisionID,
+				RevisionNumber:  p.RevisionNumber,
 				Instance:        instance,
 				AppShortID:      appSlug,
 				ProjectSlug:     p.ProjectSlug,

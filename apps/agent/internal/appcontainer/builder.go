@@ -33,7 +33,11 @@ func BuildCreateRequest(spec Spec) (docker.CreateContainerRequest, error) {
 		return docker.CreateContainerRequest{}, fmt.Errorf("invalid container metadata: %w", err)
 	}
 
-	name, err := FormatName(spec.Metadata.AppShortID, spec.Metadata.RevisionID, spec.Metadata.Instance)
+	token, err := NameRevisionToken(spec.Metadata.RevisionNumber)
+	if err != nil {
+		return docker.CreateContainerRequest{}, fmt.Errorf("could not format platform container name: %w", err)
+	}
+	name, err := FormatName(spec.Metadata.AppShortID, token, spec.Metadata.Instance)
 	if err != nil {
 		return docker.CreateContainerRequest{}, fmt.Errorf("could not format platform container name: %w", err)
 	}

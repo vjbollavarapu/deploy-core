@@ -23,6 +23,7 @@ type rollbackRevisionPayload struct {
 	DeploymentID         string                   `json:"deploymentId,omitempty"`
 	TargetRevisionID     string                   `json:"targetRevisionId,omitempty"`
 	RevisionID           string                   `json:"revisionId,omitempty"` // alias
+	RevisionNumber       int                      `json:"revisionNumber"`
 	ReplicaIndex         int                      `json:"replicaIndex"`
 	Instance             int                      `json:"instance,omitempty"`
 	ApplicationSlug      string                   `json:"applicationSlug,omitempty"`
@@ -93,6 +94,9 @@ func rollbackRevisionHandler(cli *docker.Client, tr transport.Client, log *slog.
 		if strings.TrimSpace(p.Image) == "" {
 			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "image is required")
 		}
+		if p.RevisionNumber < 1 {
+			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "revisionNumber must be a positive integer")
+		}
 		if alias := strings.TrimSpace(p.DNSAlias); alias != "" && !protocol.ValidDNSAlias(alias) {
 			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "dnsAlias must be a single DNS label")
 		}
@@ -158,6 +162,7 @@ func rollbackRevisionHandler(cli *docker.Client, tr transport.Client, log *slog.
 			ApplicationID:        p.ApplicationID,
 			DeploymentID:         p.DeploymentID,
 			TargetRevisionID:     targetRev,
+			RevisionNumber:       p.RevisionNumber,
 			ReplicaIndex:         p.ReplicaIndex,
 			Instance:             p.Instance,
 			ApplicationSlug:      p.ApplicationSlug,

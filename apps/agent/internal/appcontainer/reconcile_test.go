@@ -17,6 +17,7 @@ func TestPlanReconciliation_Scenarios(t *testing.T) {
 			EnvironmentID:  envID,
 			DeploymentID:   "dep-50",
 			RevisionID:     "rev-50",
+			RevisionNumber: 50,
 			Instance:       1,
 			AppShortID:     "dayaapi",
 		},

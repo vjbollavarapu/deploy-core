@@ -67,10 +67,11 @@ func TestDeployRevision_InjectsBootstrapEnvAndHidesValues(t *testing.T) {
 	}}
 	h := deployRevisionHandler(&docker.Client{}, tr, nil)
 	res, err := h.Execute(context.Background(), map[string]any{
-		"applicationId": "app-1",
-		"revisionId":    rev.String(),
-		"image":         "redis:7-alpine",
-		"env":           []string{"REDIS_URL=from-payload"},
+		"applicationId":  "app-1",
+		"revisionId":     rev.String(),
+		"revisionNumber": 1,
+		"image":          "redis:7-alpine",
+		"env":            []string{"REDIS_URL=from-payload"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -98,9 +99,10 @@ func TestDeployRevision_SanitizesCreateError(t *testing.T) {
 	}}
 	h := deployRevisionHandler(&docker.Client{}, tr, nil)
 	_, err := h.Execute(context.Background(), map[string]any{
-		"applicationId": "app-1",
-		"revisionId":    rev.String(),
-		"image":         "example:1",
+		"applicationId":  "app-1",
+		"revisionId":     rev.String(),
+		"revisionNumber": 1,
+		"image":          "example:1",
 	})
 	if err == nil {
 		t.Fatal("expected create error")
@@ -131,6 +133,7 @@ func TestRollbackRevision_InjectsBootstrapEnv(t *testing.T) {
 	res, err := h.Execute(context.Background(), map[string]any{
 		"applicationId":    "app-1",
 		"targetRevisionId": rev.String(),
+		"revisionNumber":   1,
 		"image":            "example:1",
 	})
 	if err != nil {
@@ -155,9 +158,10 @@ func TestDeployRevision_UUIDWithoutTransportFailsClosed(t *testing.T) {
 	}
 	h := deployRevisionHandler(&docker.Client{}, nil, nil)
 	_, err := h.Execute(context.Background(), map[string]any{
-		"applicationId": "app-1",
-		"revisionId":    uuid.NewString(),
-		"image":         "example:1",
+		"applicationId":  "app-1",
+		"revisionId":     uuid.NewString(),
+		"revisionNumber": 1,
+		"image":          "example:1",
 	})
 	if err == nil {
 		t.Fatal("expected bootstrap failure")
@@ -182,6 +186,7 @@ func TestDeployRevision_PassesPrivateNetworkAndAlias(t *testing.T) {
 	_, err := h.Execute(context.Background(), map[string]any{
 		"applicationId":   "app-1",
 		"revisionId":      "r1",
+		"revisionNumber":  1,
 		"image":           "redis:7-alpine",
 		"applicationSlug": "redis",
 		"projectSlug":     "modulyn",
@@ -212,6 +217,7 @@ func TestRollbackRevision_PassesPrivateNetworkAndAlias(t *testing.T) {
 	_, err := h.Execute(context.Background(), map[string]any{
 		"applicationId":    "app-1",
 		"targetRevisionId": "rev-1",
+		"revisionNumber":   1,
 		"image":            "redis:7-alpine",
 		"applicationSlug":  "redis",
 		"projectSlug":      "modulyn",

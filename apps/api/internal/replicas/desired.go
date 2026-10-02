@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 )
 
 // DesiredFromRuntime extracts desiredReplicas from runtime_config (default 1).
@@ -69,11 +71,12 @@ func MultiplyLimits(perReplicaCPU int, perReplicaMem, perReplicaDisk int64, desi
 	return
 }
 
-// ContainerName builds a deterministic container name for a replica slot.
+// ContainerName is the Docker name stored on a replica slot.
+// index is the 0-based replica index. The instance token is index+1.
 func ContainerName(appSlug string, revisionNumber, index int) string {
-	safe := appSlug
-	if safe == "" {
-		safe = "app"
+	name, err := protocol.PlatformContainerName(appSlug, revisionNumber, index)
+	if err != nil {
+		return ""
 	}
-	return fmt.Sprintf("%s-r%d-%d", safe, revisionNumber, index)
+	return name
 }

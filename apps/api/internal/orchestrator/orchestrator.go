@@ -357,6 +357,9 @@ func (o *Orchestrator) stepCreatingContainer(ctx context.Context, d deployments.
 		// Runtime values stay on the revision snapshot. The agent loads them
 		// through the runtime bootstrap endpoint and must not find them here.
 		payload := containerCreateCommandPayload(d, i, desired, slug, name, traefik, cfg.InternalPort, netName, projectSlug, envSlug, volumePayload)
+		if revNumber > 0 {
+			payload["revisionNumber"] = revNumber
+		}
 		// For rollback, identify current production containers for drain/stop.
 		if isRollback(d) {
 			if prev, err := o.getActiveRevision(ctx, d.ApplicationID); err == nil && prev != nil {
@@ -1102,11 +1105,15 @@ func (o *Orchestrator) issueOrSimulate(ctx context.Context, d deployments.Deploy
 
 	if d.TargetRevisionID != nil {
 		payload["revisionId"] = d.TargetRevisionID.String()
+		var digest, tag string
+		var revNumber int
+		_ = o.pool.QueryRow(ctx, `
+			SELECT COALESCE(image_digest, ''), COALESCE(image_tag, ''), revision_number
+			FROM revisions WHERE id = $1`, *d.TargetRevisionID).Scan(&digest, &tag, &revNumber)
+		if revNumber > 0 {
+			payload["revisionNumber"] = revNumber
+		}
 		if _, ok := payload["image"]; !ok && (op == protocol.OpDeployRevision || op == protocol.OpStartContainer || op == protocol.OpRunHealthCheck) {
-			var digest, tag string
-			_ = o.pool.QueryRow(ctx, `
-				SELECT COALESCE(image_digest, ''), COALESCE(image_tag, '')
-				FROM revisions WHERE id = $1`, *d.TargetRevisionID).Scan(&digest, &tag)
 			image := digest
 			if image == "" {
 				image = tag

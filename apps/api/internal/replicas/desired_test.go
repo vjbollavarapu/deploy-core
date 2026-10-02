@@ -29,8 +29,18 @@ func TestMultiplyLimits(t *testing.T) {
 }
 
 func TestContainerName(t *testing.T) {
-	if got := replicas.ContainerName("api", 2, 1); got != "api-r2-1" {
+	if got := replicas.ContainerName("redis", 1, 0); got != "dc-redis-r1-1" {
 		t.Fatalf("got %s", got)
+	}
+	if got := replicas.ContainerName("redis", 2, 0); got != "dc-redis-r2-1" {
+		t.Fatalf("second revision = %s", got)
+	}
+	// Replica index 1 is instance 2.
+	if got := replicas.ContainerName("api", 2, 1); got != "dc-api-r2-2" {
+		t.Fatalf("got %s", got)
+	}
+	if replicas.ContainerName("redis", 0, 0) != "" {
+		t.Fatal("revision 0 produced a container name")
 	}
 }
 

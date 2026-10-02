@@ -146,7 +146,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, appID uuid.UUID, replaceInde
 		if err != nil {
 			return err
 		}
-		if err := r.issueReplicaLifecycle(ctx, app, slot, activeRev, "scale_up"); err != nil {
+		if err := r.issueReplicaLifecycle(ctx, app, slot, activeRev, revNumber, "scale_up"); err != nil {
 			r.log.Warn("replica ensure failed", slog.String("error", err.Error()), slog.Int("index", i))
 			msg := err.Error()
 			_, _ = r.repo.UpdateStatus(ctx, slot.ID, StatusFailed, nil, nil, nil, &msg)
@@ -226,18 +226,20 @@ func (r *Reconciler) hasOpenLifecycleCommand(ctx context.Context, serverID, appI
 	return exists, err
 }
 
-func (r *Reconciler) issueReplicaLifecycle(ctx context.Context, app AppMeta, slot Replica, revisionID *uuid.UUID, reason string) error {
+func (r *Reconciler) issueReplicaLifecycle(ctx context.Context, app AppMeta, slot Replica, revisionID *uuid.UUID, revisionNumber int, reason string) error {
 	if app.ServerID == nil || r.simulate {
 		return nil
 	}
 	now := r.now().UTC()
 	payload := map[string]any{
-		"applicationId":  app.ID.String(),
-		"replicaIndex":   slot.ReplicaIndex,
-		"containerName":  slot.ContainerName,
-		"reason":         reason,
-		"routingEnabled": false, // production routing only after deployment activation
-		"desiredAction":  "ensure_running",
+		"applicationId":   app.ID.String(),
+		"replicaIndex":    slot.ReplicaIndex,
+		"containerName":   slot.ContainerName,
+		"applicationSlug": app.Slug,
+		"revisionNumber":  revisionNumber,
+		"reason":          reason,
+		"routingEnabled":  false, // production routing only after deployment activation
+		"desiredAction":   "ensure_running",
 		"routingLabels": map[string]string{
 			"deploycore.application.id": app.ID.String(),
 			"deploycore.replica.index":  fmt.Sprintf("%d", slot.ReplicaIndex),

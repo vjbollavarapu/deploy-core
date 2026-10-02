@@ -12,6 +12,7 @@ import (
 	"github.com/deploycore/deploy-core/apps/agent/internal/candidate"
 	"github.com/deploycore/deploy-core/apps/agent/internal/network"
 	"github.com/deploycore/deploy-core/apps/agent/internal/volume"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 )
 
 // Client defines the Docker methods required by the Rollback Executor.
@@ -71,6 +72,9 @@ func (e *Executor) Execute(ctx context.Context, spec RollbackSpec) (RollbackResu
 	if strings.TrimSpace(spec.Image) == "" {
 		return RollbackResult{}, fmt.Errorf("image is required")
 	}
+	if spec.RevisionNumber < 1 {
+		return RollbackResult{}, fmt.Errorf("revisionNumber must be a positive integer")
+	}
 
 	// Resolve immutable image reference
 	imageRef := strings.TrimSpace(spec.Image)
@@ -89,13 +93,11 @@ func (e *Executor) Execute(ctx context.Context, spec RollbackSpec) (RollbackResu
 		}
 	}
 
-	appSlug := strings.ToLower(strings.TrimSpace(spec.ApplicationSlug))
-	if appSlug == "" {
-		appSlug = strings.ToLower(strings.TrimSpace(spec.ApplicationID))
+	rawSlug := strings.TrimSpace(spec.ApplicationSlug)
+	if rawSlug == "" {
+		rawSlug = strings.TrimSpace(spec.ApplicationID)
 	}
-	if appSlug == "" {
-		appSlug = "app"
-	}
+	appSlug := protocol.SanitizeApplicationSlug(rawSlug)
 
 	orgID := strings.TrimSpace(spec.OrganizationID)
 	if orgID == "" {
@@ -117,6 +119,7 @@ func (e *Executor) Execute(ctx context.Context, spec RollbackSpec) (RollbackResu
 		EnvironmentID:   envID,
 		DeploymentID:    depID,
 		RevisionID:      spec.TargetRevisionID,
+		RevisionNumber:  spec.RevisionNumber,
 		Instance:        instance,
 		AppShortID:      appSlug,
 		ProjectSlug:     spec.ProjectSlug,
@@ -124,7 +127,14 @@ func (e *Executor) Execute(ctx context.Context, spec RollbackSpec) (RollbackResu
 		IsCandidate:     true,
 	}
 
-	expectedContainerName, _ := appcontainer.FormatName(meta.AppShortID, meta.RevisionID, meta.Instance)
+	revisionToken, err := appcontainer.NameRevisionToken(spec.RevisionNumber)
+	if err != nil {
+		return RollbackResult{}, fmt.Errorf("failed to format platform container name: %w", err)
+	}
+	expectedContainerName, err := appcontainer.FormatName(meta.AppShortID, revisionToken, meta.Instance)
+	if err != nil {
+		return RollbackResult{}, fmt.Errorf("failed to format platform container name: %w", err)
+	}
 
 	candSpec := candidate.CandidateSpec{
 		Metadata:       meta,

@@ -12,6 +12,7 @@ import (
 	"github.com/deploycore/deploy-core/apps/agent/internal/candidate"
 	"github.com/deploycore/deploy-core/apps/agent/internal/docker"
 	"github.com/deploycore/deploy-core/apps/agent/internal/drain"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 )
 
 type mockClient struct {
@@ -26,6 +27,7 @@ type mockClient struct {
 	stopped     []string
 	removed     []string
 	healthFails bool
+	lastReq     docker.CreateContainerRequest
 }
 
 func newMockClient() *mockClient {
@@ -103,6 +105,7 @@ func (m *mockClient) InspectContainer(ctx context.Context, id string) (docker.Co
 func (m *mockClient) CreateContainer(ctx context.Context, req docker.CreateContainerRequest) (docker.CreateContainerResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.lastReq = req
 	cid := "c-" + req.Name
 	m.created = append(m.created, cid)
 	m.containers[cid] = docker.ContainerDetail{
@@ -208,6 +211,7 @@ func TestExecutor_Execute_Success(t *testing.T) {
 		ApplicationSlug:    "app",
 		DeploymentID:       "dep-rb-1",
 		TargetRevisionID:   "rev-1",
+		RevisionNumber:     1,
 		ReplicaIndex:       0,
 		Instance:           1,
 		Image:              "app:v1",
@@ -305,6 +309,7 @@ func TestExecutor_Execute_TargetHealthFailure_CleansCandidateAndPreservesCurrent
 		ApplicationSlug:    "app",
 		DeploymentID:       "dep-rb-fail",
 		TargetRevisionID:   "rev-1",
+		RevisionNumber:     1,
 		ReplicaIndex:       0,
 		Instance:           1,
 		Image:              "app:v1",
@@ -337,7 +342,7 @@ func TestExecutor_Execute_TargetHealthFailure_CleansCandidateAndPreservesCurrent
 	}
 
 	// Candidate container must have been cleaned up (stopped and removed)
-	candName, _ := appcontainer.FormatName("app", "rev-1", 1)
+	candName, _ := appcontainer.FormatName("app", "1", 1)
 	cleaned := false
 	for _, id := range cli.removed {
 		if id == "c-"+candName {
@@ -364,6 +369,7 @@ func TestExecutor_Execute_ImagePullsByDigestWhenNotPresent(t *testing.T) {
 		ApplicationSlug:    "app",
 		DeploymentID:       "dep-pull",
 		TargetRevisionID:   "rev-target",
+		RevisionNumber:     1,
 		Image:              "registry.internal/app",
 		ImageDigest:        "sha256:fedcba9876543210",
 		CurrentContainerID: "curr-live",
@@ -385,5 +391,34 @@ func TestExecutor_Execute_ImagePullsByDigestWhenNotPresent(t *testing.T) {
 	expectedPullRef := "registry.internal/app@sha256:fedcba9876543210"
 	if len(cli.pulled) != 1 || cli.pulled[0] != expectedPullRef {
 		t.Errorf("expected pulled image %q, got %v", expectedPullRef, cli.pulled)
+	}
+}
+
+func TestExecutor_Execute_ReusesNumericRevisionName(t *testing.T) {
+	cli := newMockClient()
+	cli.images["redis:7-alpine"] = docker.ImageDetail{ID: "sha256:redis", RepoTags: []string{"redis:7-alpine"}}
+	const revisionID = "4268d1fc-6522-411b-9568-7ee30a59fd1e"
+	res, err := NewExecutor(cli, nil, nil, nil).Execute(context.Background(), RollbackSpec{
+		OrganizationID:   "org-1",
+		ApplicationID:    "app-redis",
+		ApplicationSlug:  "redis",
+		DeploymentID:     "dep-rb",
+		TargetRevisionID: revisionID,
+		RevisionNumber:   1,
+		ReplicaIndex:     0,
+		Image:            "redis:7-alpine",
+		HealthPolicy:     candidate.HealthPolicy{Type: candidate.HealthTypeContainerState},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.TargetContainerName != "dc-redis-r1-1" {
+		t.Fatalf("rollback container = %s", res.TargetContainerName)
+	}
+	if strings.Contains(res.TargetContainerName, revisionID) {
+		t.Fatalf("rollback name used the revision UUID: %s", res.TargetContainerName)
+	}
+	if cli.lastReq.PlatformLabels[protocol.LabelRevisionID] != revisionID {
+		t.Fatalf("revision label = %q", cli.lastReq.PlatformLabels[protocol.LabelRevisionID])
 	}
 }

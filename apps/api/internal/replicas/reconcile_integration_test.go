@@ -83,7 +83,7 @@ func TestReconcileAfterActiveRevisionMaterializesSlot(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO revisions (
 			id, organization_id, application_id, revision_number, status, image_tag
-		) VALUES ($1, $2, $3, 3, 'ACTIVE', 'redis:7-alpine')`, revID, orgID, appID); err != nil {
+		) VALUES ($1, $2, $3, 1, 'ACTIVE', 'redis:7-alpine')`, revID, orgID, appID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -100,8 +100,19 @@ func TestReconcileAfterActiveRevisionMaterializesSlot(t *testing.T) {
 		WHERE application_id = $1 AND replica_index = 0`, appID).Scan(&name, &status, &slotRevision); err != nil {
 		t.Fatal(err)
 	}
-	if name != replicas.ContainerName("redis", 3, 0) || slotRevision != revID || status != replicas.StatusStarting {
+	if name != "dc-redis-r1-1" || name != replicas.ContainerName("redis", 1, 0) || slotRevision != revID || status != replicas.StatusStarting {
 		t.Fatalf("slot name=%s revision=%s status=%s", name, slotRevision, status)
+	}
+	var revisionNumber string
+	if err := pool.QueryRow(ctx, `
+		SELECT payload->>'revisionNumber'
+		FROM agent_commands
+		WHERE server_id = $1 AND operation = $2 AND payload->>'containerName' = $3`,
+		serverID, protocol.OpDeployRevision, name).Scan(&revisionNumber); err != nil {
+		t.Fatal(err)
+	}
+	if revisionNumber != "1" {
+		t.Fatalf("deploy revisionNumber=%s", revisionNumber)
 	}
 	assertLifecycleCommands(t, ctx, pool, serverID, name, 1)
 

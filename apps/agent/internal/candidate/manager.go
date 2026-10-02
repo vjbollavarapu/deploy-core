@@ -295,7 +295,11 @@ func (m *Manager) ensureVolumes(ctx context.Context, spec CandidateSpec) error {
 }
 
 func (m *Manager) createCandidateContainer(ctx context.Context, spec CandidateSpec) (string, string, error) {
-	name, err := appcontainer.FormatName(spec.Metadata.AppShortID, spec.Metadata.RevisionID, spec.Metadata.Instance)
+	token, err := appcontainer.NameRevisionToken(spec.Metadata.RevisionNumber)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to format platform container name: %w", err)
+	}
+	name, err := appcontainer.FormatName(spec.Metadata.AppShortID, token, spec.Metadata.Instance)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to format platform container name: %w", err)
 	}

@@ -15,6 +15,7 @@ func TestBuildCreateRequest(t *testing.T) {
 			EnvironmentID:  "env-789",
 			DeploymentID:   "dep-101",
 			RevisionID:     "49",
+			RevisionNumber: 49,
 			Instance:       1,
 			AppShortID:     "dayaapi",
 		},

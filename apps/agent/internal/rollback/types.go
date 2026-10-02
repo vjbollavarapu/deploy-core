@@ -26,6 +26,7 @@ type RollbackSpec struct {
 	ApplicationID        string                  `json:"applicationId"`
 	DeploymentID         string                  `json:"deploymentId"`
 	TargetRevisionID     string                  `json:"targetRevisionId"`
+	RevisionNumber       int                     `json:"revisionNumber"`
 	ReplicaIndex         int                     `json:"replicaIndex"`
 	Instance             int                     `json:"instance,omitempty"`
 	ApplicationSlug      string                  `json:"applicationSlug,omitempty"`

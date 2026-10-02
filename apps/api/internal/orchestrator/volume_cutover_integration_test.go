@@ -440,6 +440,9 @@ func TestWritableRollbackStopsActiveHolder(t *testing.T) {
 		t.Fatalf("second status=%s err=%v", current.Status, err)
 	}
 	holder := replicas.ContainerName("api", 2, 0)
+	if holder != "dc-api-r2-1" || replicas.ContainerName("api", 1, 0) != "dc-api-r1-1" {
+		t.Fatalf("platform names holder=%s previous=%s", holder, replicas.ContainerName("api", 1, 0))
+	}
 	stopAt, deployAt := -1, -1
 	for i, cmd := range secondOrch.simulated {
 		if cmd.deploymentID != second.ID {
@@ -451,6 +454,9 @@ func TestWritableRollbackStopsActiveHolder(t *testing.T) {
 		}
 		if cmd.op == protocol.OpDeployRevision && cmd.payload["phase"] == "create_container" && deployAt < 0 {
 			deployAt = i
+			if name != "dc-api-r2-1" || cmd.payload["revisionNumber"] != 2 {
+				t.Fatalf("second deploy payload name=%s revisionNumber=%v", name, cmd.payload["revisionNumber"])
+			}
 		}
 	}
 	if stopAt < 0 || deployAt < 0 || stopAt > deployAt {
@@ -486,6 +492,9 @@ func TestWritableRollbackStopsActiveHolder(t *testing.T) {
 		}
 		if cmd.op == protocol.OpDeployRevision && cmd.payload["phase"] == "rollback" && rbDeploy < 0 {
 			rbDeploy = i
+			if name != "dc-api-r1-1" || cmd.payload["revisionNumber"] != 1 {
+				t.Fatalf("rollback payload name=%s revisionNumber=%v", name, cmd.payload["revisionNumber"])
+			}
 		}
 	}
 	if rbStop < 0 || rbDeploy < 0 || rbStop > rbDeploy {

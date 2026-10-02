@@ -43,8 +43,9 @@ func TestDeployRevisionHandler_ValidationAndDispatch(t *testing.T) {
 	nilReg := buildRegistry(nil, nil, nil, "", nil, nil)
 	nilHandler := nilReg[protocol.OpDeployRevision]
 	_, err = nilHandler.Execute(context.Background(), map[string]any{
-		"applicationId": "app-123",
-		"image":         "redis:7-alpine",
+		"applicationId":  "app-123",
+		"revisionNumber": 1,
+		"image":          "redis:7-alpine",
 	})
 	if err == nil {
 		t.Fatalf("expected error for nil docker client")

@@ -96,7 +96,11 @@ func PlanReconciliation(desired DesiredWorkload, discovered DiscoveryResult) (Re
 			plan.MissingInstances = append(plan.MissingInstances, inst)
 
 			// Check if an untrusted container on the host is squatting on the expected name
-			expectedName, err := FormatName(desired.Metadata.AppShortID, desired.Metadata.RevisionID, inst)
+			token, tokenErr := NameRevisionToken(desired.Metadata.RevisionNumber)
+			if tokenErr != nil {
+				continue
+			}
+			expectedName, err := FormatName(desired.Metadata.AppShortID, token, inst)
 			if err == nil {
 				if col, ok := collisionNames[expectedName]; ok {
 					plan.BlockedInstances[inst] = fmt.Sprintf("untrusted container %q (ID %s) collides with expected name", col.Name, col.ID)

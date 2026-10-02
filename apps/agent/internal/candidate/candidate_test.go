@@ -277,6 +277,7 @@ func validSpec() CandidateSpec {
 			EnvironmentID:  "env-789",
 			DeploymentID:   "dep-101",
 			RevisionID:     "r49",
+			RevisionNumber: 49,
 			Instance:       1,
 			AppShortID:     "dayaapi",
 		},
@@ -362,6 +363,41 @@ func TestStartCandidate_FullFlow(t *testing.T) {
 	// Verify Step 5: Start was called
 	if len(mock.startedIDs) == 0 {
 		t.Errorf("expected StartContainer to be called")
+	}
+}
+
+func TestStartCandidate_RevisionNumberNamesContainerAndUUIDStaysOnLabel(t *testing.T) {
+	mock := newMockDockerClient()
+	mock.images["redis:7-alpine"] = docker.ImageDetail{ID: "sha256:redis", RepoTags: []string{"redis:7-alpine"}}
+	mgr := NewManager(mock, network.NewManager(mock), volume.NewManager(mock), nil)
+
+	const revisionID = "4268d1fc-6522-411b-9568-7ee30a59fd1e"
+	spec := validSpec()
+	spec.Metadata.ApplicationID = "app-redis"
+	spec.Metadata.RevisionID = revisionID
+	spec.Metadata.RevisionNumber = 1
+	spec.Metadata.Instance = 1
+	spec.Metadata.AppShortID = "redis"
+	spec.Image = "redis:7-alpine"
+
+	res, err := mgr.StartCandidate(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ContainerName != "dc-redis-r1-1" {
+		t.Fatalf("container name = %s", res.ContainerName)
+	}
+	if strings.Contains(res.ContainerName, revisionID) {
+		t.Fatalf("container name embedded the revision UUID: %s", res.ContainerName)
+	}
+	if mock.lastCreatedReq == nil {
+		t.Fatal("expected CreateContainer")
+	}
+	if mock.lastCreatedReq.Name != "dc-redis-r1-1" {
+		t.Fatalf("create name = %s", mock.lastCreatedReq.Name)
+	}
+	if mock.lastCreatedReq.PlatformLabels[protocol.LabelRevisionID] != revisionID {
+		t.Fatalf("revision label = %q", mock.lastCreatedReq.PlatformLabels[protocol.LabelRevisionID])
 	}
 }
 
