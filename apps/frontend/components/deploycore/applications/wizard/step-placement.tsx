@@ -13,6 +13,14 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { CreateApplicationValues } from '@/lib/validations/application'
+import {
+  environmentOptionLabel,
+  environmentSelectItems,
+  placementAfterProjectChange,
+  projectSelectItems,
+  serverOptionLabel,
+  serverSelectItems,
+} from './placement-options'
 
 export interface PlacementEnvironment {
   id: string
@@ -56,14 +64,21 @@ export function StepPlacement({
   isLoading = false,
 }: StepPlacementProps) {
   const projectId = watch('projectId')
+  const serverId = watch('serverId')
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === projectId),
+    [projects, projectId],
+  )
+  const projectItems = useMemo(() => projectSelectItems(projects), [projects])
+  const environmentItems = useMemo(
+    () => environmentSelectItems(projects, projectId),
     [projects, projectId],
   )
   const availableServers = useMemo(
     () => servers.filter((server) => server.status !== 'offline' && server.status !== 'OFFLINE'),
     [servers],
   )
+  const serverItems = useMemo(() => serverSelectItems(servers), [servers])
 
   return (
     <FieldGroup>
@@ -87,10 +102,13 @@ export function StepPlacement({
           control={control}
           render={({ field }) => (
             <Select
+              items={projectItems}
               value={field.value || null}
               onValueChange={(value) => {
+                const next = placementAfterProjectChange(serverId)
                 field.onChange(value ?? '')
-                setValue('environment', '')
+                setValue('environment', next.environment)
+                setValue('serverId', next.serverId)
               }}
             >
               <SelectTrigger id="wizard-project" className="w-full" aria-invalid={Boolean(errors.projectId)}>
@@ -98,8 +116,8 @@ export function StepPlacement({
               </SelectTrigger>
               <SelectContent>
                 {projects.map((project) => (
-                  <SelectItem key={project.id} value={project.id}>
-                    {project.name}
+                  <SelectItem key={project.id} value={project.id} label={project.name}>
+                    {projectItems[project.id]}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -119,6 +137,7 @@ export function StepPlacement({
           control={control}
           render={({ field }) => (
             <Select
+              items={environmentItems}
               value={field.value || null}
               onValueChange={(value) => field.onChange(value ?? '')}
               disabled={!selectedProject}
@@ -140,8 +159,8 @@ export function StepPlacement({
               </SelectTrigger>
               <SelectContent>
                 {(selectedProject?.environments ?? []).map((env) => (
-                  <SelectItem key={env.id} value={env.id}>
-                    {env.name} {env.kind ? `(${env.kind})` : ''}
+                  <SelectItem key={env.id} value={env.id} label={environmentOptionLabel(env)}>
+                    {environmentItems[env.id]}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -157,14 +176,18 @@ export function StepPlacement({
           name="serverId"
           control={control}
           render={({ field }) => (
-            <Select value={field.value || null} onValueChange={(value) => field.onChange(value ?? '')}>
+            <Select
+              items={serverItems}
+              value={field.value || null}
+              onValueChange={(value) => field.onChange(value ?? '')}
+            >
               <SelectTrigger id="wizard-server" className="w-full" aria-invalid={Boolean(errors.serverId)}>
                 <SelectValue placeholder={isLoading ? 'Loading servers…' : 'Select a server'} />
               </SelectTrigger>
               <SelectContent>
                 {availableServers.map((server) => (
-                  <SelectItem key={server.id} value={server.id}>
-                    {server.name} {server.region ? `· ${server.region}` : ''}
+                  <SelectItem key={server.id} value={server.id} label={serverOptionLabel(server)}>
+                    {serverItems[server.id]}
                   </SelectItem>
                 ))}
               </SelectContent>
