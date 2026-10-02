@@ -32,6 +32,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.Handle("PATCH /databases/{databaseId}", h.auth.RequireAuth(http.HandlerFunc(h.Update)))
 	mux.Handle("DELETE /databases/{databaseId}", h.auth.RequireAuth(http.HandlerFunc(h.Delete)))
 	mux.Handle("POST /databases/{databaseId}/credentials/reveal", h.auth.RequireAuth(http.HandlerFunc(h.Reveal)))
+	mux.Handle("POST /databases/{databaseId}/retry", h.auth.RequireAuth(http.HandlerFunc(h.Retry)))
 	mux.Handle("GET /agents/databases/{databaseId}/bootstrap", h.requireAgent(http.HandlerFunc(h.Bootstrap)))
 }
 
@@ -260,6 +261,20 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		"message":        res.Message,
 		"databaseId":     res.ID.String(),
 	})
+}
+
+func (h *Handler) Retry(w http.ResponseWriter, r *http.Request) {
+	user, id, err := actorAndID(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	d, err := h.svc.RetryProvision(r.Context(), user.ID, id, auditMeta(r))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"database": toResponse(d)})
 }
 
 func (h *Handler) Reveal(w http.ResponseWriter, r *http.Request) {

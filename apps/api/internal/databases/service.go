@@ -196,6 +196,84 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 	return d, nil
 }
 
+// RetryProvision reissues PROVISION_DATABASE for a FAILED database that has no
+// runtime. The existing record, credential, DNS alias, and protected volume stay
+// in place. The previous agent command row is left as history.
+func (s *Service) RetryProvision(ctx context.Context, actorID uuid.UUID, id uuid.UUID, meta AuditMeta) (Database, error) {
+	d, _, err := s.repo.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Database{}, apierror.NotFoundCode(apierror.CodeDatabaseNotFound, "database not found")
+		}
+		return Database{}, err
+	}
+	if err := s.authz.RequirePermission(ctx, actorID, d.OrganizationID, rbac.DatabaseUpdate); err != nil {
+		return Database{}, err
+	}
+	if d.ContainerRuntimeID != nil && strings.TrimSpace(*d.ContainerRuntimeID) != "" {
+		return Database{}, apierror.Conflict("cannot retry provisioning after a runtime exists")
+	}
+	if d.Status != StatusFailed {
+		return Database{}, apierror.Conflict("database provisioning can only be retried from FAILED")
+	}
+
+	scope, err := s.repo.ResolveEnvironment(ctx, d.EnvironmentID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Database{}, apierror.NotFoundCode(apierror.CodeEnvironmentNotFound, "environment not found")
+		}
+		return Database{}, err
+	}
+	if scope.OrganizationID != d.OrganizationID || scope.ProjectID != d.ProjectID || scope.EnvironmentID != d.EnvironmentID {
+		return Database{}, apierror.Conflict("database placement no longer matches its environment")
+	}
+	ok, err := s.repo.ServerInOrg(ctx, d.OrganizationID, d.ServerID)
+	if err != nil {
+		return Database{}, err
+	}
+	if !ok {
+		return Database{}, apierror.NotFoundCode(apierror.CodeServerNotFound, "server not found in organization")
+	}
+
+	previousCommandID := ""
+	if d.ProvisionCommandID != nil {
+		previousCommandID = d.ProvisionCommandID.String()
+	}
+
+	// Claim before issuing a command so a second request cannot create one.
+	claimed, err := s.repo.ClaimProvisionRetry(ctx, d.ID)
+	if err != nil {
+		if errors.Is(err, ErrNotClaimable) {
+			return Database{}, apierror.Conflict("database provisioning retry is already in progress")
+		}
+		return Database{}, err
+	}
+
+	cmd, err := s.issueProvision(ctx, claimed, scope, &actorID)
+	if err != nil {
+		_, _ = s.repo.SetProvisionState(ctx, d.ID, StatusFailed, nil, nil, err.Error())
+		return Database{}, err
+	}
+	updated, err := s.repo.SetProvisionState(ctx, d.ID, StatusProvisioning, &cmd.ID, nil, "")
+	if err != nil {
+		return Database{}, err
+	}
+	s.writeAudit(ctx, &updated.OrganizationID, &actorID, "database.provision.retry", "database", updated.ID.String(), meta,
+		map[string]any{
+			"status":                     StatusFailed,
+			"previousProvisionCommandId": previousCommandID,
+		},
+		map[string]any{
+			"status":             updated.Status,
+			"provisionCommandId": cmd.ID.String(),
+			"dnsAlias":           updated.DNSAlias,
+			"storageVolumeName":  updated.StorageVolumeName,
+			"volumeProtected":    updated.VolumeProtected,
+		},
+	)
+	return updated, nil
+}
+
 func (s *Service) issueProvision(ctx context.Context, d Database, scope EnvironmentScope, issuedBy *uuid.UUID) (agentcmd.Command, error) {
 	if s.commands == nil {
 		return agentcmd.Command{}, apierror.Internal("command store not configured")

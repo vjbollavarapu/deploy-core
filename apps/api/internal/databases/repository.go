@@ -16,6 +16,8 @@ var (
 	ErrNotFound      = errors.New("databases: not found")
 	ErrConflict      = errors.New("databases: conflict")
 	ErrAliasConflict = errors.New("databases: alias conflict")
+	// ErrNotClaimable means another retry already moved the row out of FAILED.
+	ErrNotClaimable = errors.New("databases: provision retry not claimable")
 )
 
 type Repository interface {
@@ -28,6 +30,10 @@ type Repository interface {
 	Update(ctx context.Context, id uuid.UUID, d Database, cred *credentialBlob) (Database, error)
 	SoftDelete(ctx context.Context, id uuid.UUID, at time.Time) error
 	SetProvisionState(ctx context.Context, id uuid.UUID, status string, commandID *uuid.UUID, runtimeID *string, lastError string) (Database, error)
+	// ClaimProvisionRetry moves FAILED → PROVISIONING only when no runtime exists.
+	// Zero rows means the row was not claimable. The previous command id is kept
+	// until the caller records the replacement command.
+	ClaimProvisionRetry(ctx context.Context, id uuid.UUID) (Database, error)
 }
 
 type PostgresRepository struct {
@@ -262,6 +268,31 @@ func (r *PostgresRepository) SetProvisionState(ctx context.Context, id uuid.UUID
 	out, err := scanDatabase(r.pool.QueryRow(ctx, q, id, status, commandID, runtimeID, lastError))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Database{}, ErrNotFound
+	}
+	return out, err
+}
+
+// ClaimProvisionRetry is a single conditional update. PostgreSQL locks the row,
+// so only one concurrent retry can match status FAILED and an empty runtime.
+func (r *PostgresRepository) ClaimProvisionRetry(ctx context.Context, id uuid.UUID) (Database, error) {
+	const q = `
+		UPDATE managed_databases SET
+			status = 'PROVISIONING',
+			last_error = '',
+			updated_at = NOW()
+		WHERE id = $1
+		  AND deleted_at IS NULL
+		  AND status = 'FAILED'
+		  AND (container_runtime_id IS NULL OR btrim(container_runtime_id) = '')
+		RETURNING id, organization_id, project_id, environment_id, server_id, name,
+			engine, engine_version, database_name, username, dns_alias,
+			storage_volume_name, volume_protected, cpu_millis, memory_bytes,
+			container_runtime_id, status, backup_policy, provision_command_id, last_error,
+			created_by, created_at, updated_at, deleted_at,
+			TRUE`
+	out, err := scanDatabase(r.pool.QueryRow(ctx, q, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Database{}, ErrNotClaimable
 	}
 	return out, err
 }
