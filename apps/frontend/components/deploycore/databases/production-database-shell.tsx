@@ -7,8 +7,13 @@ import { LoadingState } from '@/components/platform/loading-state'
 import { PageContainer } from '@/components/platform/page-container'
 import { ResourceHeader } from '@/components/platform/resource-header'
 import { StatusBadge } from '@/components/platform/status-badge'
+import { DatabaseProvisionRetryButton } from '@/components/deploycore/databases/database-provision-retry-button'
 import { apiClient } from '@/lib/api'
-import { loadProductionDatabase, type ProductionDatabase } from '@/lib/control-plane/database-read'
+import {
+  canRetryDatabaseProvision,
+  loadProductionDatabase,
+  type ProductionDatabase,
+} from '@/lib/control-plane/database-read'
 import type { Status } from '@/lib/types'
 
 const DatabaseDetailContext = createContext<ProductionDatabase | null>(null)
@@ -94,6 +99,15 @@ export function ProductionDatabaseShell({
             { label: database.name },
           ]}
           badges={<StatusBadge status={database.status as Status} />}
+          actions={
+            canRetryDatabaseProvision(database) ? (
+              <DatabaseProvisionRetryButton
+                databaseId={database.id}
+                databaseName={database.name}
+                onRetried={() => setAttempt((value) => value + 1)}
+              />
+            ) : null
+          }
           meta={
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               <span>{database.environment}</span>

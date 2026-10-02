@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  canRetryDatabaseProvision,
   createProductionDatabase,
   databaseCreateBody,
   databaseListPath,
+  databaseRetryPath,
   isEnvironmentsCollectionPath,
   loadProductionDatabase,
   loadProductionDatabaseList,
   projectEnvironmentsPath,
+  retryProductionDatabaseProvision,
   type DatabaseReadClient,
 } from './database-read'
 
@@ -187,8 +190,68 @@ describe('production database detail', () => {
     assert.equal(result.value.credentialsRevealAllowed, true)
     assert.equal(result.value.connectionHost, 'db-modulyn')
     assert.equal(result.value.port, 5432)
+    assert.equal(result.value.containerRuntimeId, undefined)
     assert.equal('password' in result.value, false)
     assert.equal(JSON.stringify(result.value).includes(SECRET), false)
     assert.equal(api.calls.some((path) => isEnvironmentsCollectionPath(path)), false)
+  })
+})
+
+describe('production database provision retry', () => {
+  it('shows retry only for a failed database with no runtime', () => {
+    assert.equal(canRetryDatabaseProvision({ status: 'FAILED' }), true)
+    assert.equal(canRetryDatabaseProvision({ status: 'failed', containerRuntimeId: '  ' }), true)
+    assert.equal(canRetryDatabaseProvision({ status: 'FAILED', containerRuntimeId: 'ctr-1' }), false)
+    assert.equal(canRetryDatabaseProvision({ status: 'PROVISIONING' }), false)
+    assert.equal(canRetryDatabaseProvision({ status: 'RUNNING' }), false)
+    assert.equal(canRetryDatabaseProvision({ status: 'PENDING' }), false)
+  })
+
+  it('posts the retry route with no body and ignores a duplicate while in flight', async () => {
+    assert.equal(databaseRetryPath(DB), `/databases/${DB}/retry`)
+    let posted: unknown = 'unset'
+    const api = client({
+      [`/databases/${DB}/retry`]: (body) => {
+        posted = body
+        return {
+          database: {
+            id: DB,
+            status: 'PROVISIONING',
+            password: SECRET,
+          },
+        }
+      },
+    })
+    const inflight = { current: false }
+    const first = retryProductionDatabaseProvision(api, DB, inflight)
+    const second = retryProductionDatabaseProvision(api, DB, inflight)
+    const [firstResult, secondResult] = await Promise.all([first, second])
+    assert.deepEqual(firstResult, { kind: 'ok' })
+    assert.deepEqual(secondResult, { kind: 'ignored' })
+    assert.equal(posted, undefined)
+    assert.equal(JSON.stringify(firstResult).includes(SECRET), false)
+    assert.deepEqual(api.calls, [`/databases/${DB}/retry`])
+    assert.equal(inflight.current, false)
+  })
+
+  it('keeps a blank runtime off the mapped database', async () => {
+    const api = client({
+      [`/databases/${DB}`]: () => ({
+        database: {
+          id: DB,
+          name: 'modulyn',
+          status: 'FAILED',
+          containerRuntimeId: '   ',
+          password: SECRET,
+        },
+      }),
+    })
+    const result = await loadProductionDatabase(api, DB)
+    assert.equal(result.kind, 'ok')
+    if (result.kind !== 'ok') return
+    assert.equal(result.value.status, 'failed')
+    assert.equal(result.value.containerRuntimeId, undefined)
+    assert.equal(canRetryDatabaseProvision(result.value), true)
+    assert.equal(JSON.stringify(result.value).includes(SECRET), false)
   })
 })

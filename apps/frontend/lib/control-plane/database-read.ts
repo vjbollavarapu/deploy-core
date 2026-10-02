@@ -27,6 +27,7 @@ export interface WireDatabase {
   lastError?: string
   privateHost?: string
   port?: number
+  containerRuntimeId?: string | null
   password?: string
 }
 
@@ -49,6 +50,7 @@ export interface ProductionDatabase {
   username: string
   connectionHost: string
   credentialsRevealAllowed: boolean
+  containerRuntimeId?: string
 }
 
 export interface DatabaseNameLookup {
@@ -89,6 +91,18 @@ export function projectEnvironmentsPath(projectId: string): string {
 
 export function databaseDetailPath(databaseId: string): string {
   return `/databases/${encodeURIComponent(databaseId)}`
+}
+
+export function databaseRetryPath(databaseId: string): string {
+  return `/databases/${encodeURIComponent(databaseId)}/retry`
+}
+
+export function canRetryDatabaseProvision(database: {
+  status?: string | null
+  containerRuntimeId?: string | null
+}): boolean {
+  if ((database.status ?? '').trim().toLowerCase() !== 'failed') return false
+  return !(database.containerRuntimeId ?? '').trim()
 }
 
 export function isEnvironmentsCollectionPath(path: string): boolean {
@@ -175,6 +189,29 @@ export function mapWireDatabase(wire: WireDatabase, names?: DatabaseNameLookup):
     username: wire.username?.trim() || '—',
     connectionHost: displayLabel(wire.privateHost, undefined),
     credentialsRevealAllowed: wire.hasCredential === true,
+    containerRuntimeId: wire.containerRuntimeId?.trim() || undefined,
+  }
+}
+
+export interface ProvisionRetryInflight {
+  current: boolean
+}
+
+export async function retryProductionDatabaseProvision(
+  client: DatabaseReadClient,
+  databaseId: string,
+  inflight: ProvisionRetryInflight,
+): Promise<{ kind: 'ignored' } | { kind: 'ok' }> {
+  if (inflight.current) return { kind: 'ignored' }
+  inflight.current = true
+  try {
+    const response = await client.post<{ database?: WireDatabase }>(databaseRetryPath(databaseId))
+    if (!response.database?.id) {
+      throw new Error('Provisioning retry did not return a database')
+    }
+    return { kind: 'ok' }
+  } finally {
+    inflight.current = false
   }
 }
 
