@@ -63,20 +63,38 @@ var dockerSocketPaths = []string{
 // Capability lists
 // --------------------------------------------------------------------------
 
-// hardDropCaps is the default set of capabilities always dropped for security.
-// Source: Docker's default drop set + additional hardening.
+// hardDropCaps is applied to every managed container. Docker then keeps only
+// the capabilities named in CapAdd. This is stricter than Docker's default set.
 var hardDropCaps = []string{
-	"ALL", // drop all, then add back only what's needed
+	"ALL",
 }
 
-// allowedAddCaps is the curated set of capabilities that may be added via PrivilegedPolicy.
-// This list is intentionally restrictive.
+// baselineAddCaps is the only capability set added back after CapDrop ALL.
+// Official images that start as root, initialize files or low ports, and then
+// drop privileges need CHOWN, DAC_OVERRIDE, SETUID, and SETGID. NET_BIND_SERVICE
+// covers ports below 1024. SETPCAP lets an entrypoint shrink its own bounding
+// set after initialization. It does not grant host privileges: CapDrop stays
+// ALL, so a process cannot obtain a capability that was not added here.
+var baselineAddCaps = []string{
+	"CHOWN",
+	"DAC_OVERRIDE",
+	"SETUID",
+	"SETGID",
+	"NET_BIND_SERVICE",
+	"SETPCAP",
+}
+
+// allowedAddCaps is the curated set of capabilities that may be named in
+// PrivilegedPolicy.AddCapabilities. It matches the baseline. A request cannot
+// add anything outside this set, including SYS_ADMIN, ALL, or Docker's broader
+// default capabilities.
 var allowedAddCaps = map[string]bool{
-	"NET_BIND_SERVICE": true, // allow binding ports < 1024
 	"CHOWN":            true,
+	"DAC_OVERRIDE":     true,
 	"SETUID":           true,
 	"SETGID":           true,
-	"DAC_OVERRIDE":     true,
+	"NET_BIND_SERVICE": true,
+	"SETPCAP":          true,
 }
 
 // --------------------------------------------------------------------------
@@ -282,11 +300,18 @@ func validateSecurityPolicy(req *CreateContainerRequest) error {
 		add("device passthrough requires explicit admin grant (reserved for future use)")
 	}
 
-	// Capability allowlist check
+	// Capability allowlist check. Names are normalized so CAP_SYS_ADMIN and
+	// sys_admin are the same request. Anything outside the baseline is rejected,
+	// including ALL. Explicit names are later merged with the baseline; they
+	// cannot remove a baseline capability.
 	for _, cap := range policy.AddCapabilities {
-		if !allowedAddCaps[cap] {
+		normalized := normalizeCapability(cap)
+		if normalized == "" || !allowedAddCaps[normalized] {
 			add(fmt.Sprintf("capability %q is not in the permitted add-capability list", cap))
 		}
+	}
+	if err := validateDropCapabilities(policy.DropCapabilities); err != nil {
+		add(err.Error())
 	}
 
 	if len(errs) > 0 {
@@ -345,12 +370,71 @@ func validateTraefikConfig(tc *TraefikConfig) error {
 	return nil
 }
 
-// effectiveDropCaps returns the capabilities that should be dropped.
-// If the policy specifies custom drops, those are used; otherwise the
-// hardened defaults are returned.
-func effectiveDropCaps(policy *PrivilegedPolicy) []string {
-	if policy != nil && len(policy.DropCapabilities) > 0 {
-		return policy.DropCapabilities
+// normalizeCapability trims whitespace, uppercases the name, and strips a
+// leading CAP_ prefix. Docker accepts both forms; the allow-list stores one.
+func normalizeCapability(cap string) string {
+	cap = strings.ToUpper(strings.TrimSpace(cap))
+	cap = strings.TrimPrefix(cap, "CAP_")
+	return cap
+}
+
+// validateDropCapabilities rejects a drop list that would replace CapDrop ALL.
+// An empty list and an explicit ["ALL"] both keep the hardened drop.
+func validateDropCapabilities(drops []string) error {
+	if len(drops) == 0 {
+		return nil
 	}
-	return hardDropCaps
+	if len(drops) == 1 && normalizeCapability(drops[0]) == "ALL" {
+		return nil
+	}
+	return errors.New("capability drop list cannot replace CapDrop ALL")
+}
+
+// effectiveDropCaps returns CapDrop ALL for every policy. A caller cannot
+// substitute a narrower drop list; that would restore Docker's default
+// capability set underneath the baseline.
+func effectiveDropCaps(policy *PrivilegedPolicy) []string {
+	// policy cannot select a different drop set. CapDrop ALL is unconditional.
+	_ = policy
+	return append([]string(nil), hardDropCaps...)
+}
+
+// effectiveAddCaps returns the baseline plus any allow-listed capabilities
+// named on the policy, in stable order and without duplicates.
+//
+// nil policy, an empty PrivilegedPolicy, and an explicit list that only repeats
+// baseline names all produce the same set. A name outside the allow-list is
+// ignored here because validateSecurityPolicy already rejects the request.
+func effectiveAddCaps(policy *PrivilegedPolicy) []string {
+	out := make([]string, 0, len(baselineAddCaps))
+	seen := make(map[string]struct{}, len(baselineAddCaps))
+	add := func(cap string) {
+		if _, ok := seen[cap]; ok {
+			return
+		}
+		seen[cap] = struct{}{}
+		out = append(out, cap)
+	}
+	for _, cap := range baselineAddCaps {
+		add(cap)
+	}
+	if policy == nil {
+		return out
+	}
+	for _, raw := range policy.AddCapabilities {
+		cap := normalizeCapability(raw)
+		if !allowedAddCaps[cap] {
+			continue
+		}
+		add(cap)
+	}
+	return out
+}
+
+// EffectiveCapabilities is the capability set CreateContainer writes into
+// HostConfig. SETPCAP is part of the baseline so an entrypoint can clear its
+// own bounding set. The process still cannot gain a capability that was dropped
+// and not added back.
+func EffectiveCapabilities(policy *PrivilegedPolicy) (capAdd, capDrop []string) {
+	return effectiveAddCaps(policy), effectiveDropCaps(policy)
 }

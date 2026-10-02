@@ -364,6 +364,16 @@ func TestStartCandidate_FullFlow(t *testing.T) {
 	if len(mock.startedIDs) == 0 {
 		t.Errorf("expected StartContainer to be called")
 	}
+
+	// Nil policy is resolved by Docker create to the shared capability baseline.
+	add, drop := docker.EffectiveCapabilities(mock.lastCreatedReq.Policy)
+	if strings.Join(drop, ",") != "ALL" {
+		t.Errorf("CapDrop = %v", drop)
+	}
+	wantCaps := "CHOWN,DAC_OVERRIDE,SETUID,SETGID,NET_BIND_SERVICE,SETPCAP"
+	if strings.Join(add, ",") != wantCaps {
+		t.Errorf("CapAdd = %v", add)
+	}
 }
 
 func TestStartCandidate_RevisionNumberNamesContainerAndUUIDStaysOnLabel(t *testing.T) {

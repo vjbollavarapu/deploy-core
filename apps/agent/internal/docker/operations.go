@@ -325,12 +325,10 @@ func (c *Client) CreateContainer(ctx context.Context, req CreateContainerRequest
 	}
 
 	// --- Security / capability config ---
+	// CapDrop ALL plus the curated baseline. Explicit AddCapabilities are merged
+	// into that baseline; they cannot replace it or name a forbidden capability.
 	policy := req.Policy
-	capDrop := effectiveDropCaps(policy)
-	var capAdd []string
-	if policy != nil {
-		capAdd = policy.AddCapabilities
-	}
+	capAdd, capDrop := EffectiveCapabilities(policy)
 
 	hostCfg := &container.HostConfig{
 		PortBindings:   portBindings,

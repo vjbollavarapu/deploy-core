@@ -214,7 +214,9 @@ func (m *Manager) Provision(ctx context.Context, req ProvisionRequest) (*Databas
 			"deploycore.service_type": "database",
 			"deploycore.database_id":  req.DatabaseID,
 		},
-		Policy: &docker.PrivilegedPolicy{}, // Safe defaults (no host paths, no host networking)
+		// Empty policy: CreateContainer drops ALL capabilities and adds the
+		// shared baseline. There is no database-specific capability list.
+		Policy: &docker.PrivilegedPolicy{},
 	}
 
 	res, err := m.cli.CreateContainer(ctx, createReq)

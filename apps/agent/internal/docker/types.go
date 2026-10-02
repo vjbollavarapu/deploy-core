@@ -185,10 +185,13 @@ type PrivilegedPolicy struct {
 	AllowArbitraryHostPaths bool
 	// AllowDevicePassthrough permits --device flags.
 	AllowDevicePassthrough bool
-	// AddCapabilities lists Linux capabilities to add. Empty by default.
-	// Only a curated allow-list is accepted when the policy is enabled.
+	// AddCapabilities lists Linux capabilities to add on top of the baseline.
+	// Empty means the baseline only. Only the curated allow-list is accepted.
+	// Names are merged with the baseline and de-duplicated; they cannot remove
+	// a baseline capability or name a capability outside the allow-list.
 	AddCapabilities []string
-	// DropCapabilities are always applied; defaults to the full hardened drop set.
+	// DropCapabilities must be empty or ["ALL"]. A narrower list is rejected
+	// because CapDrop ALL is unconditional.
 	DropCapabilities []string
 }
 
@@ -239,7 +242,8 @@ type CreateContainerRequest struct {
 	// (e.g. deploycore.managed, deploycore.organization_id). Callers cannot supply these.
 	PlatformLabels map[string]string
 	// Policy grants specific privileged capabilities.
-	// nil = all dangerous options blocked (the safe default).
+	// nil and an empty policy both drop every capability and add back only the
+	// curated baseline. Dangerous host options stay blocked.
 	Policy *PrivilegedPolicy
 }
 

@@ -477,6 +477,119 @@ func TestValidateCreateRequest_PrivilegedPolicyHooks_DisabledByDefault(t *testin
 	}
 }
 
+func TestEffectiveCapabilities_NilPolicy(t *testing.T) {
+	assertBaselineCapabilities(t, nil)
+}
+
+func TestEffectiveCapabilities_EmptyPolicy(t *testing.T) {
+	assertBaselineCapabilities(t, &PrivilegedPolicy{})
+}
+
+func TestEffectiveCapabilities_ExplicitSafeCapabilitiesDoNotRemoveBaseline(t *testing.T) {
+	policy := &PrivilegedPolicy{
+		AddCapabilities: []string{"SETUID", "setuid", "CAP_CHOWN", "NET_BIND_SERVICE"},
+	}
+	req := &CreateContainerRequest{Name: "my-app", Image: "alpine:latest", Policy: policy}
+	if err := validateCreateRequest(req); err != nil {
+		t.Fatalf("expected explicit baseline capabilities to pass validation, got: %v", err)
+	}
+	assertBaselineCapabilities(t, policy)
+}
+
+func TestValidateCreateRequest_ForbiddenCapabilities(t *testing.T) {
+	forbidden := []string{
+		"SYS_ADMIN",
+		"CAP_SYS_ADMIN",
+		"ALL",
+		"CAP_ALL",
+		"SYS_PTRACE",
+		"SYS_MODULE",
+		"SYS_RAWIO",
+		"NET_ADMIN",
+		"NET_RAW",
+		"MKNOD",
+	}
+	for _, cap := range forbidden {
+		t.Run(cap, func(t *testing.T) {
+			req := &CreateContainerRequest{
+				Name:  "my-app",
+				Image: "alpine:latest",
+				Policy: &PrivilegedPolicy{
+					AddCapabilities: []string{cap},
+				},
+			}
+			err := validateCreateRequest(req)
+			if err == nil {
+				t.Fatal("expected forbidden capability to be rejected")
+			}
+			if !strings.Contains(err.Error(), "is not in the permitted add-capability list") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			add, _ := EffectiveCapabilities(req.Policy)
+			for _, got := range add {
+				if got == "SYS_ADMIN" || got == "ALL" || got == cap {
+					t.Fatalf("forbidden capability %q was included in CapAdd %v", cap, add)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateCreateRequest_SETPCAPAccepted(t *testing.T) {
+	req := &CreateContainerRequest{
+		Name:  "my-app",
+		Image: "alpine:latest",
+		Policy: &PrivilegedPolicy{
+			AddCapabilities: []string{"SETPCAP"},
+		},
+	}
+	if err := validateCreateRequest(req); err != nil {
+		t.Fatalf("expected SETPCAP to be accepted, got: %v", err)
+	}
+	add, drop := EffectiveCapabilities(req.Policy)
+	if !containsCap(add, "SETPCAP") {
+		t.Fatalf("CapAdd = %v, want SETPCAP", add)
+	}
+	if len(drop) != 1 || drop[0] != "ALL" {
+		t.Fatalf("CapDrop = %v", drop)
+	}
+}
+
+func TestValidateCreateRequest_DropListCannotReplaceAll(t *testing.T) {
+	req := &CreateContainerRequest{
+		Name:  "my-app",
+		Image: "alpine:latest",
+		Policy: &PrivilegedPolicy{
+			DropCapabilities: []string{"NET_RAW"},
+		},
+	}
+	err := validateCreateRequest(req)
+	if err == nil || !strings.Contains(err.Error(), "cannot replace CapDrop ALL") {
+		t.Fatalf("expected drop-list rejection, got %v", err)
+	}
+}
+
+func assertBaselineCapabilities(t *testing.T, policy *PrivilegedPolicy) {
+	t.Helper()
+	add, drop := EffectiveCapabilities(policy)
+	want := []string{"CHOWN", "DAC_OVERRIDE", "SETUID", "SETGID", "NET_BIND_SERVICE", "SETPCAP"}
+	if strings.Join(add, ",") != strings.Join(want, ",") {
+		t.Fatalf("CapAdd = %v, want %v", add, want)
+	}
+	if len(drop) != 1 || drop[0] != "ALL" {
+		t.Fatalf("CapDrop = %v, want [ALL]", drop)
+	}
+}
+
+func containsCap(caps []string, want string) bool {
+	for _, cap := range caps {
+		if cap == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateCreateRequest_ReadOnlyRootFS(t *testing.T) {
 	req := &CreateContainerRequest{
 		Name:           "my-app",

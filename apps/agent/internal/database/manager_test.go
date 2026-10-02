@@ -188,6 +188,24 @@ func TestManager_Provision(t *testing.T) {
 	if cReq.PlatformLabels[protocol.LabelProtected] != "true" {
 		t.Errorf("expected container to have deploycore.protected='true'")
 	}
+
+	// Empty policy resolves to the same baseline as application containers.
+	if cReq.Policy == nil || len(cReq.Policy.AddCapabilities) != 0 {
+		t.Fatalf("database create must not carry a custom capability list: %+v", cReq.Policy)
+	}
+	add, drop := docker.EffectiveCapabilities(cReq.Policy)
+	if len(drop) != 1 || drop[0] != "ALL" {
+		t.Fatalf("CapDrop = %v", drop)
+	}
+	wantCaps := []string{"CHOWN", "DAC_OVERRIDE", "SETUID", "SETGID", "NET_BIND_SERVICE", "SETPCAP"}
+	if len(add) != len(wantCaps) {
+		t.Fatalf("CapAdd = %v", add)
+	}
+	for i, cap := range wantCaps {
+		if add[i] != cap {
+			t.Fatalf("CapAdd = %v", add)
+		}
+	}
 }
 
 func TestManager_StartStop(t *testing.T) {
