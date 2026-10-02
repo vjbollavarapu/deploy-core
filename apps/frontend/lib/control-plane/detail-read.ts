@@ -144,6 +144,67 @@ export function applicationLogsPath(applicationId: string): string {
   return `/applications/${encodeURIComponent(applicationId)}/logs?follow=false`
 }
 
+export function applicationRevisionsPath(applicationId: string): string {
+  return `/applications/${encodeURIComponent(applicationId)}/revisions`
+}
+
+export interface RevisionSummary {
+  id: string
+  revisionNumber: number | null
+  status: string
+  createdAt: string | null
+}
+
+export function mapRevisionSummary(wire: {
+  id?: string
+  revisionNumber?: number
+  status?: string
+  createdAt?: string
+  effectiveConfig?: unknown
+  variableSnapshot?: unknown
+  secretRefs?: unknown
+}): RevisionSummary {
+  return {
+    id: textOrNull(wire.id) ?? '',
+    revisionNumber: typeof wire.revisionNumber === 'number' ? wire.revisionNumber : null,
+    status: textOrNull(wire.status) ?? '',
+    createdAt: textOrNull(wire.createdAt),
+  }
+}
+
+export interface ProductionListSource {
+  status?: string
+  projectName?: string | null
+  targetServerId?: string | null
+  repositoryUrl?: string | null
+  gitBranch?: string | null
+  cpuLimitMillis?: number | null
+  memoryLimitBytes?: number | null
+  desiredReplicas?: number | null
+}
+
+export function mapProductionApplicationListItem(source: ProductionListSource) {
+  return {
+    project: source.projectName?.trim() || '—',
+    environment: '—',
+    server: source.targetServerId?.trim() || '—',
+    revision: '—',
+    status: mapApplicationStatus(source.status),
+    domain: '—',
+    lastDeployment: '—',
+    repo: source.repositoryUrl?.trim() || '—',
+    branch: source.gitBranch?.trim() || '—',
+    commit: '—',
+    commitMessage: '—',
+    cpu: 0,
+    cpuLimit: source.cpuLimitMillis == null ? 0 : source.cpuLimitMillis / 1000,
+    memory: 0,
+    memoryLimit: source.memoryLimitBytes == null ? 0 : Math.round(source.memoryLimitBytes / (1024 * 1024)),
+    instances: source.desiredReplicas == null || source.desiredReplicas < 1 ? 0 : source.desiredReplicas,
+    uptime: '—',
+  }
+}
+
 export function applicationSectionMode(section: string, demo: boolean): 'volumes' | 'production' | 'demo' {
   if (section === 'volumes') return 'volumes'
   if (!demo) return 'production'
@@ -168,7 +229,7 @@ export function toSettingsApplication(application: ApplicationDetail) {
 export function mapApplicationStatus(raw?: string): string {
   switch ((raw ?? '').toLowerCase()) {
     case 'draft':
-      return 'pending'
+      return 'draft'
     case 'ready':
       return 'pending'
     case 'deploying':
@@ -383,6 +444,22 @@ export async function loadProductionApplicationDeployments(
     )
     const items = Array.isArray(body.items) ? body.items : []
     return { kind: 'ok', value: items.map((item) => mapWireDeployment(item)) }
+  } catch (err) {
+    if (isNotFound(err)) return { kind: 'not-found' }
+    return { kind: 'error', message: errorMessage(err) }
+  }
+}
+
+export async function loadProductionApplicationRevisions(
+  client: DetailClient,
+  applicationId: string,
+): Promise<LoadResult<RevisionSummary[]>> {
+  try {
+    const body = await client.get<{ items?: Array<Parameters<typeof mapRevisionSummary>[0]> }>(
+      applicationRevisionsPath(applicationId),
+    )
+    const items = Array.isArray(body.items) ? body.items : []
+    return { kind: 'ok', value: items.map((item) => mapRevisionSummary(item)) }
   } catch (err) {
     if (isNotFound(err)) return { kind: 'not-found' }
     return { kind: 'error', message: errorMessage(err) }

@@ -5,6 +5,7 @@ import { DetailList } from '@/components/platform/detail-list'
 import { MetricCard } from '@/components/platform/metric-card'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { useProductionApplication } from '@/components/deploycore/applications/production-application-shell'
+import { getStatusConfig } from '@/lib/status'
 import type { Status } from '@/lib/types'
 
 function show(value: string | number | null | undefined): string {
@@ -18,11 +19,12 @@ export function ProductionApplicationOverview() {
   if (!application) return null
 
   const source = application.repositoryUrl ?? application.imageReference
+  const statusLabel = getStatusConfig(application.status as Status).label
 
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
-        <MetricCard label="Status" value={application.status} />
+        <MetricCard label="Status" value={statusLabel} />
         <MetricCard label="Type" value={application.type} />
         <MetricCard label="Replicas" value={show(application.desiredReplicas)} />
         <MetricCard label="Slug" value={show(application.slug)} />

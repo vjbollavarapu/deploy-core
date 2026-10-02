@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState, type ReactNode } from 'react'
+import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
-import { ChevronLeft, ChevronRight, Plus, Rocket } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -37,7 +38,7 @@ import {
   type PlacementProject,
   type PlacementServer,
 } from './wizard/step-placement'
-import { StepDeploy, StepReview } from './wizard/step-review'
+import { StepCreate, StepReview } from './wizard/step-review'
 import { StepStorage } from './wizard/step-storage'
 import {
   apiClient,
@@ -63,7 +64,7 @@ import {
 
 const STORAGE_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'storage')
 const REVIEW_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'review')
-const DEPLOY_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'deploy')
+const CREATE_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'create')
 
 type SavedApplication = {
   id: string
@@ -145,6 +146,7 @@ export function CreateApplicationWizard({
   defaultEnvironment,
   onSuccess,
 }: CreateApplicationWizardProps) {
+  const router = useRouter()
   const { activeOrg } = useOrganization()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState(0)
@@ -327,13 +329,13 @@ export function CreateApplicationWizard({
     setStep((current) => Math.max(current - 1, 0))
   }
 
-  async function onDeploy() {
+  async function onCreate() {
     clearErrors()
     setServerError(null)
     const parsed = createApplicationSchema.safeParse(getValues())
     if (!parsed.success) {
       applyZodIssues(parsed.error.issues, setError)
-      setServerError('Fix validation errors before deploying.')
+      setServerError('Fix validation errors before creating the application.')
       return
     }
 
@@ -353,7 +355,7 @@ export function CreateApplicationWizard({
       const mode = creationMode(hasControlPlaneIds, isDemoModeEnabled())
 
       if (mode === 'blocked') {
-        setServerError('Select a project, environment, and server from the control plane before deploying.')
+        setServerError('Select a project, environment, and server from the control plane before creating the application.')
         return
       }
 
@@ -388,7 +390,7 @@ export function CreateApplicationWizard({
           },
         }
 
-        await createApplicationWithVariables(apiClient, {
+        const created = await createApplicationWithVariables(apiClient, {
           organizationId: activeOrg.id,
           serverId: data.serverId,
           applicationBody: appPayload,
@@ -406,11 +408,17 @@ export function CreateApplicationWizard({
               }
             : undefined,
         })
-      } else {
-        await new Promise((resolve) => setTimeout(resolve, 600))
+        toast.success(`Application “${data.name}” saved`)
+        clearCreateApplicationResume()
+        setSavedApplication(null)
+        onSuccess?.()
+        handleOpenChange(false)
+        router.push(`/applications/${created.applicationId}`)
+        return
       }
 
-      toast.success(`Application “${data.name}” created and deployment queued`)
+      await new Promise((resolve) => setTimeout(resolve, 600))
+      toast.success(`Application “${data.name}” saved`)
       clearCreateApplicationResume()
       setSavedApplication(null)
       onSuccess?.()
@@ -470,7 +478,7 @@ export function CreateApplicationWizard({
         <DialogHeader>
           <DialogTitle>Create application</DialogTitle>
           <DialogDescription>
-            Configure source, runtime, networking, placement, and optional storage. Nothing is submitted until Deploy.
+            Configure source, runtime, networking, placement, and optional storage. Nothing is submitted until Create application.
           </DialogDescription>
         </DialogHeader>
 
@@ -523,8 +531,8 @@ export function CreateApplicationWizard({
           {step === REVIEW_STEP && (
             <StepReview values={values} projects={projectsList} servers={serversList} />
           )}
-          {step === DEPLOY_STEP && (
-            <StepDeploy
+          {step === CREATE_STEP && (
+            <StepCreate
               values={values}
               pending={pending}
               projects={projectsList}
@@ -552,15 +560,14 @@ export function CreateApplicationWizard({
             Back
           </Button>
 
-          {step < DEPLOY_STEP ? (
+          {step < CREATE_STEP ? (
             <Button type="button" size="sm" onClick={() => void goNext()} disabled={pending}>
               Continue
               <ChevronRight data-icon="inline-end" />
             </Button>
           ) : (
-            <Button type="button" size="sm" disabled={pending} onClick={() => void onDeploy()}>
-              <Rocket data-icon="inline-start" />
-              {pending ? 'Deploying…' : 'Deploy'}
+            <Button type="button" size="sm" disabled={pending} onClick={() => void onCreate()}>
+              {pending ? 'Creating…' : 'Create application'}
             </Button>
           )}
         </DialogFooter>

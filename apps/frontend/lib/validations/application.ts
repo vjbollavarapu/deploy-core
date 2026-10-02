@@ -240,7 +240,7 @@ export const WIZARD_STEPS = [
   { id: 'placement', label: 'Placement', schema: placementStepSchema },
   { id: 'storage', label: 'Storage', schema: storageStepSchema },
   { id: 'review', label: 'Review' },
-  { id: 'deploy', label: 'Deploy' },
+  { id: 'create', label: 'Create' },
 ] as const
 
 export const DEFAULT_APPLICATION_VALUES: CreateApplicationValues = {

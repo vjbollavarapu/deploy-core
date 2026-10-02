@@ -41,14 +41,16 @@ function client(
 }
 
 describe('create application variable order', () => {
-  it('posts every variable before deployment', async () => {
+  it('saves the application and variables and returns the id without deploying', async () => {
     const harness = client({
       '/applications': () => ({ application: { id: 'app-1' } }),
       '/variables': () => ({ variable: { id: 'v' } }),
-      '/applications/app-1/deployments': () => ({ deployment: { id: 'd-1' } }),
+      '/applications/app-1/deployments': () => {
+        throw new Error('deployment must not be queued')
+      },
     })
 
-    await createApplicationWithVariables(harness.client, {
+    const result = await createApplicationWithVariables(harness.client, {
       organizationId: 'org-1',
       applicationBody: { name: 'redis' },
       envVars: [
@@ -57,9 +59,10 @@ describe('create application variable order', () => {
       ],
     })
 
+    assert.equal(result.applicationId, 'app-1')
     assert.deepEqual(
       harness.calls.map((call) => call.path),
-      ['/applications', '/variables', '/variables', '/applications/app-1/deployments'],
+      ['/applications', '/variables', '/variables'],
     )
     assert.deepEqual(harness.calls[1].body, {
       organizationId: 'org-1',
@@ -69,22 +72,22 @@ describe('create application variable order', () => {
       value: 'redis://redis:6379',
     })
     assert.equal((harness.calls[2].body as { key: string }).key, 'LOG_LEVEL')
-    assert.deepEqual(harness.calls[3].body, { trigger: 'manual' })
+    assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
   })
 
-  it('queues deployment when no variables were entered', async () => {
+  it('saves an application with no variables and does not deploy', async () => {
     const harness = client({
       '/applications': () => ({ application: { id: 'app-1' } }),
-      '/applications/app-1/deployments': () => ({}),
     })
-    await createApplicationWithVariables(harness.client, {
+    const result = await createApplicationWithVariables(harness.client, {
       organizationId: 'org-1',
       applicationBody: { name: 'api' },
       envVars: [],
     })
+    assert.equal(result.applicationId, 'app-1')
     assert.deepEqual(
       harness.calls.map((call) => call.path),
-      ['/applications', '/applications/app-1/deployments'],
+      ['/applications'],
     )
   })
 
@@ -125,35 +128,19 @@ describe('create application variable order', () => {
     )
   })
 
-  it('keeps saved variables when deployment creation fails', async () => {
+  it('returns the application id after variables are saved and never posts a deployment', async () => {
     const harness = client({
       '/applications': () => ({ application: { id: 'app-1' } }),
       '/variables': () => ({}),
-      '/applications/app-1/deployments': () => {
-        throw new Error('deployment queue unavailable')
-      },
     })
-    await assert.rejects(
-      () =>
-        createApplicationWithVariables(harness.client, {
-          organizationId: 'org-1',
-          applicationBody: { name: 'api' },
-          envVars: [{ key: 'LOG_LEVEL', value: 'info' }],
-        }),
-      (err: unknown) => {
-        assert.ok(err instanceof CreateFlowError)
-        assert.equal(err.phase, 'deployment')
-        assert.deepEqual(err.savedKeys, ['LOG_LEVEL'])
-        assert.match(err.message, /environment variables were saved/)
-        assert.equal(err.message.includes('info'), false)
-        return true
-      },
-    )
-    assert.equal(
-      harness.calls.some((call) => call.path.includes('DELETE')),
-      false,
-    )
+    const result = await createApplicationWithVariables(harness.client, {
+      organizationId: 'org-1',
+      applicationBody: { name: 'api' },
+      envVars: [{ key: 'LOG_LEVEL', value: 'info' }],
+    })
+    assert.equal(result.applicationId, 'app-1')
     assert.equal(harness.calls.filter((call) => call.path === '/variables').length, 1)
+    assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
   })
 
   it('does not place secret names on the variable endpoint', () => {
@@ -164,17 +151,23 @@ describe('create application variable order', () => {
     assert.equal(bodies[0].scope, 'APPLICATION')
   })
 
-  it('retries only the deployment after variables were saved', async () => {
+  it('reuses the application id and does not deploy when variables are already saved', async () => {
     const harness = client({
-      '/applications/app-1/deployments': () => ({ deployment: { id: 'd-1' } }),
+      '/applications': () => {
+        throw new Error('application must be reused')
+      },
+      '/variables': () => {
+        throw new Error('saved variable must not be posted again')
+      },
     })
-    await createApplicationWithVariables(harness.client, {
+    const result = await createApplicationWithVariables(harness.client, {
       organizationId: 'org-1',
       applicationBody: { name: 'api' },
       envVars: [{ key: 'LOG_LEVEL', value: 'info' }],
       resume: { applicationId: 'app-1', savedKeys: ['LOG_LEVEL'] },
     })
-    assert.deepEqual(harness.calls.map((call) => call.path), ['/applications/app-1/deployments'])
+    assert.equal(result.applicationId, 'app-1')
+    assert.deepEqual(harness.calls, [])
   })
 
   it('resumes unsaved variables without recreating the application or reposting saved keys', async () => {
@@ -190,7 +183,6 @@ describe('create application variable order', () => {
         }
         return {}
       },
-      '/applications/app-1/deployments': () => ({ deployment: { id: 'd-1' } }),
     })
     const envVars = [
       { key: 'A', value: 'a-value' },
@@ -214,7 +206,7 @@ describe('create application variable order', () => {
         assert.match(err.message, /Application already exists/)
         assert.match(err.message, /Some configuration was saved/)
         assert.match(err.message, /Deployment was not queued/)
-        assert.match(err.message, /Press Deploy again/)
+        assert.match(err.message, /Press Create application again/)
         assert.equal(err.message.includes(secret), false)
         assert.equal(err.message.includes('a-value'), false)
         assert.equal(err.message.includes('c-value'), false)
@@ -265,15 +257,14 @@ describe('create application variable order', () => {
       [
         ['/variables', 'B'],
         ['/variables', 'C'],
-        ['/applications/app-1/deployments', undefined],
       ],
     )
+    assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
   })
 
   it('does not post or deploy when a saved variable is removed', async () => {
     const harness = client({
       '/variables': () => ({}),
-      '/applications/app-1/deployments': () => ({}),
     })
     await assert.rejects(
       () =>
@@ -300,7 +291,6 @@ describe('create application variable order', () => {
   it('posts only a newly added variable after earlier keys were saved', async () => {
     const harness = client({
       '/variables': () => ({}),
-      '/applications/app-1/deployments': () => ({}),
     })
     await createApplicationWithVariables(harness.client, {
       organizationId: 'org-1',
@@ -315,9 +305,9 @@ describe('create application variable order', () => {
       harness.calls.map((call) => [call.path, (call.body as { key?: string } | undefined)?.key]),
       [
         ['/variables', 'C'],
-        ['/applications/app-1/deployments', undefined],
       ],
     )
+    assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
   })
 
   it('redacts values and keeps demo mode off the production path', () => {
@@ -337,23 +327,23 @@ describe('create application storage', () => {
     }
   }
 
-  it('creates, waits, and attaches a volume before the first deployment', async () => {
+  it('creates, waits, and attaches a volume and returns the application id', async () => {
     const harness = client(
       {
         '/applications': () => ({ application: { id: 'app-1' } }),
         '/volumes': () => ({ volume: { id: 'vol-1', state: 'CREATING' } }),
         '/volumes/vol-1/attach': () => ({ volume: { id: 'vol-1', state: 'ATTACHED' } }),
-        '/applications/app-1/deployments': () => ({}),
       },
       readyGet('vol-1'),
     )
-    await createApplicationWithVariables(harness.client, {
+    const result = await createApplicationWithVariables(harness.client, {
       organizationId: 'org-1',
       serverId: 'server-1',
       applicationBody: { name: 'redis' },
       envVars: [],
       volumes: [volume],
     })
+    assert.equal(result.applicationId, 'app-1')
     assert.deepEqual(
       harness.calls.map((call) => call.path),
       [
@@ -361,7 +351,6 @@ describe('create application storage', () => {
         '/volumes',
         '/volumes/vol-1',
         '/volumes/vol-1/attach',
-        '/applications/app-1/deployments',
       ],
     )
     assert.deepEqual(harness.calls[1]?.body, {
@@ -383,7 +372,6 @@ describe('create application storage', () => {
     const harness = client(
       {
         '/volumes/vol-1/attach': () => ({}),
-        '/applications/app-1/deployments': () => ({}),
       },
       readyGet('vol-1'),
     )
@@ -401,8 +389,9 @@ describe('create application storage', () => {
     })
     assert.deepEqual(
       harness.calls.map((call) => call.path),
-      ['/volumes/vol-1', '/volumes/vol-1/attach', '/applications/app-1/deployments'],
+      ['/volumes/vol-1', '/volumes/vol-1/attach'],
     )
+    assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
   })
 
   it('keeps polling a volume that is still creating', async () => {
@@ -410,7 +399,6 @@ describe('create application storage', () => {
     const harness = client(
       {
         '/volumes/vol-1/attach': () => ({}),
-        '/applications/app-1/deployments': () => ({}),
       },
       {
         '/volumes/vol-1': () => {
@@ -433,6 +421,7 @@ describe('create application storage', () => {
     })
     assert.equal(reads, 2)
     assert.equal(harness.calls.some((call) => call.path === '/volumes'), false)
+    assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
   })
 
   it('does not deploy when volume creation failed', async () => {
@@ -466,13 +455,12 @@ describe('create application storage', () => {
     assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
   })
 
-  it('retries a failed volume on the same id and deploys only after it is ready', async () => {
+  it('retries a failed volume on the same id and attaches it without deploying', async () => {
     let reads = 0
     const harness = client(
       {
         '/volumes/vol-1/retry': () => ({ volume: { id: 'vol-1', state: 'CREATING' } }),
         '/volumes/vol-1/attach': () => ({}),
-        '/applications/app-1/deployments': () => ({}),
       },
       {
         '/volumes/vol-1': () => {
@@ -496,8 +484,9 @@ describe('create application storage', () => {
     })
     assert.deepEqual(
       harness.calls.map((call) => call.path),
-      ['/volumes/vol-1', '/volumes/vol-1/retry', '/volumes/vol-1', '/volumes/vol-1/attach', '/applications/app-1/deployments'],
+      ['/volumes/vol-1', '/volumes/vol-1/retry', '/volumes/vol-1', '/volumes/vol-1/attach'],
     )
+    assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
   })
 
   it('does not retry or deploy a failed volume that already has a docker name', async () => {
@@ -529,38 +518,9 @@ describe('create application storage', () => {
     assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
   })
 
-  it('retries only the deployment after storage is attached', async () => {
-    let attempts = 0
-    const harness = client({
-      '/applications/app-1/deployments': () => {
-        attempts += 1
-        if (attempts === 1) throw new Error('queue down')
-        return {}
-      },
-    })
-    await assert.rejects(
-      () =>
-        createApplicationWithVariables(harness.client, {
-          organizationId: 'org-1',
-          serverId: 'server-1',
-          applicationBody: { name: 'redis' },
-          envVars: [],
-          volumes: [volume],
-          resume: {
-            applicationId: 'app-1',
-            savedKeys: [],
-            savedVolumes: [{ name: 'redis-data', volumeId: 'vol-1', mountPath: '/data', readOnly: false, attached: true }],
-          },
-        }),
-      (err: unknown) => {
-        assert.ok(err instanceof CreateFlowError)
-        assert.equal(err.phase, 'deployment')
-        assert.equal(err.savedVolumes[0]?.attached, true)
-        return true
-      },
-    )
-    harness.calls.length = 0
-    await createApplicationWithVariables(harness.client, {
+  it('does not queue a deployment when storage is already attached', async () => {
+    const harness = client({})
+    const result = await createApplicationWithVariables(harness.client, {
       organizationId: 'org-1',
       serverId: 'server-1',
       applicationBody: { name: 'redis' },
@@ -572,10 +532,8 @@ describe('create application storage', () => {
         savedVolumes: [{ name: 'redis-data', volumeId: 'vol-1', mountPath: '/data', readOnly: false, attached: true }],
       },
     })
-    assert.deepEqual(
-      harness.calls.map((call) => call.path),
-      ['/applications/app-1/deployments'],
-    )
+    assert.equal(result.applicationId, 'app-1')
+    assert.deepEqual(harness.calls, [])
   })
 
   it('does not recreate an earlier volume when a later one fails', async () => {

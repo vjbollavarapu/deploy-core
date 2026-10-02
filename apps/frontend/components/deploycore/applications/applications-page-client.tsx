@@ -9,6 +9,7 @@ import { PageContainer } from '@/components/platform/page-container'
 import { PageHeader } from '@/components/platform/page-header'
 import { apiClient, type Page, type Application as WireApplication, type WireProject } from '@/lib/api'
 import { useOrganization } from '@/lib/auth-context'
+import { mapProductionApplicationListItem } from '@/lib/control-plane/detail-read'
 import type { Application, RuntimeType, Status } from '@/lib/types'
 
 interface ApplicationsPageClientProps {
@@ -72,31 +73,24 @@ export function ApplicationsPageClient({ applications: fallbackApplications }: A
 
         if (Array.isArray(appRes?.items)) {
           const mapped: Application[] = appRes.items.map((app) => {
-            const projectName = (app.projectId && projectNamesById[app.projectId]) || 'Core Platform'
-            const statusStr = (app.status?.toLowerCase() as Status) || 'healthy'
+            const listed = mapProductionApplicationListItem({
+              status: app.status,
+              projectName: app.projectId ? projectNamesById[app.projectId] : null,
+              targetServerId: app.targetServerId,
+              repositoryUrl: app.config?.repositoryUrl,
+              gitBranch: app.config?.gitBranch,
+              cpuLimitMillis: app.config?.cpuLimitMillis,
+              memoryLimitBytes: app.config?.memoryLimitBytes,
+              desiredReplicas: app.config?.desiredReplicas,
+            })
 
             return {
               id: app.id || app.slug || '',
               name: app.name || 'Untitled',
               projectId: app.projectId || '',
-              project: projectName,
-              environment: 'production',
               runtime: mapRuntimeType(app.type),
-              server: app.targetServerId || 'srv-primary',
-              revision: 'rev-init',
-              status: statusStr,
-              domain: app.slug ? `${app.slug}.deploycore.app` : '',
-              lastDeployment: 'Just now',
-              repo: app.config?.repositoryUrl || '—',
-              branch: app.config?.gitBranch || 'main',
-              commit: '—',
-              commitMessage: '—',
-              cpu: 10,
-              cpuLimit: (app.config?.cpuLimitMillis || 1000) / 1000,
-              memory: 20,
-              memoryLimit: Math.round((app.config?.memoryLimitBytes || 536870912) / (1024 * 1024)),
-              instances: app.config?.desiredReplicas || 1,
-              uptime: '1d',
+              ...listed,
+              status: listed.status as Status,
             }
           })
 

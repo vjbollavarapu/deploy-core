@@ -40,7 +40,7 @@ export function StepConfiguration({
             <FieldDescription>
               Plain configuration values injected at runtime.
               {lockedKeys.length > 0
-                ? ' Saved variables stay as stored. Deploy retries only variables that are not saved yet.'
+                ? ' Saved variables stay as stored. Create application retries only variables that are not saved yet.'
                 : ''}
             </FieldDescription>
           </div>
@@ -105,9 +105,8 @@ export function StepConfiguration({
         <FieldLabel>Secrets</FieldLabel>
         <FieldDescription>
           Secret values are not entered in this wizard and are not saved as environment variables.
-          Existing secrets in the organization, project, environment, and application scopes are
-          included when the revision is created. Add them in Security → Secrets before deploying
-          if this application needs them.
+          After the application is saved, add application secrets on its Secrets section.
+          Deploy later to snapshot those secret versions into the first revision.
         </FieldDescription>
       </div>
     </FieldGroup>

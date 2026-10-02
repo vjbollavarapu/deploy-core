@@ -134,7 +134,11 @@ export function ProductionApplicationShell({
                 <GitBranch data-icon="inline-start" />
                 Deployments
               </Button>
-              <ApplicationRedeployButton applicationId={application.id} applicationName={application.name} />
+              <ApplicationRedeployButton
+                applicationId={application.id}
+                applicationName={application.name}
+                status={application.status}
+              />
             </div>
           }
         />

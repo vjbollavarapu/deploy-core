@@ -40,7 +40,7 @@ export type SavedVolume = {
 }
 
 export class CreateFlowError extends Error {
-  readonly phase: 'application' | 'configuration' | 'storage' | 'deployment'
+  readonly phase: 'application' | 'configuration' | 'storage'
   readonly applicationId?: string
   /** Variable keys confirmed by a successful POST /variables. Values are not stored. */
   readonly savedKeys: string[]
@@ -48,7 +48,7 @@ export class CreateFlowError extends Error {
   readonly savedVolumes: SavedVolume[]
 
   constructor(
-    phase: 'application' | 'configuration' | 'storage' | 'deployment',
+    phase: 'application' | 'configuration' | 'storage',
     message: string,
     applicationId?: string,
     savedKeys: string[] = [],
@@ -248,7 +248,7 @@ async function ensureApplicationVolumes(
         if (!/already exists/i.test(detail)) {
           throw new CreateFlowError(
             'storage',
-            `Volume ${volume.name} could not be created (${detail}). Deployment was not queued. Press Deploy again to retry storage.`,
+            `Volume ${volume.name} could not be created (${detail}). Deployment was not queued. Press Create application again to retry storage.`,
             input.applicationId,
             input.savedKeys,
             progress,
@@ -284,7 +284,7 @@ async function ensureApplicationVolumes(
         const detail = redactVariableValues(errorText(err), input.secretValues)
         throw new CreateFlowError(
           'storage',
-          `Volume ${volume.name} is not ready (${detail}). Deployment was not queued. Press Deploy again to keep waiting on this volume.`,
+          `Volume ${volume.name} is not ready (${detail}). Deployment was not queued. Press Create application again to keep waiting on this volume.`,
           input.applicationId,
           input.savedKeys,
           progress,
@@ -309,7 +309,7 @@ async function ensureApplicationVolumes(
           const detail = redactVariableValues(errorText(err), input.secretValues)
           throw new CreateFlowError(
             'storage',
-            `Volume ${volume.name} is not ready (${detail}). Deployment was not queued. Press Deploy again to keep waiting on this volume.`,
+            `Volume ${volume.name} is not ready (${detail}). Deployment was not queued. Press Create application again to keep waiting on this volume.`,
             input.applicationId,
             input.savedKeys,
             progress,
@@ -345,7 +345,7 @@ async function ensureApplicationVolumes(
         const detail = redactVariableValues(errorText(err), input.secretValues)
         throw new CreateFlowError(
           'storage',
-          `Volume ${volume.name} was created, but it could not be attached (${detail}). Deployment was not queued. Press Deploy again to retry attachment.`,
+          `Volume ${volume.name} was created, but it could not be attached (${detail}). Deployment was not queued. Press Create application again to retry attachment.`,
           input.applicationId,
           input.savedKeys,
           progress,
@@ -390,7 +390,7 @@ export async function createApplicationWithVariables(
     if (seen.has(body.key)) {
       throw new CreateFlowError(
         'configuration',
-        `Application already exists. Environment variable ${body.key} is listed more than once. Deployment was not queued. Press Deploy again after keeping one row for that key.`,
+        `Application already exists. Environment variable ${body.key} is listed more than once. Deployment was not queued. Press Create application again after keeping one row for that key.`,
         applicationId,
         [...saved],
         resumedVolumes,
@@ -421,13 +421,13 @@ export async function createApplicationWithVariables(
       const savedKeys = [...saved]
       const message =
         savedKeys.length > 0
-          ? `Application already exists. Some configuration was saved, but environment variable ${body.key} could not be saved (${detail}). Deployment was not queued. Press Deploy again to retry the remaining configuration.`
-          : `Application was created, but environment variable ${body.key} could not be saved (${detail}). Deployment was not queued. Press Deploy again to retry the remaining configuration.`
+          ? `Application already exists. Some configuration was saved, but environment variable ${body.key} could not be saved (${detail}). Deployment was not queued. Press Create application again to retry the remaining configuration.`
+          : `Application was created, but environment variable ${body.key} could not be saved (${detail}). Deployment was not queued. Press Create application again to retry the remaining configuration.`
       throw new CreateFlowError('configuration', message, applicationId, savedKeys, resumedVolumes)
     }
   }
 
-  const savedVolumes = await ensureApplicationVolumes(client, {
+  await ensureApplicationVolumes(client, {
     organizationId: input.organizationId,
     applicationId,
     serverId: input.serverId ?? '',
@@ -436,23 +436,6 @@ export async function createApplicationWithVariables(
     savedKeys: [...saved],
     secretValues: values,
   })
-
-  try {
-    await client.post(`/applications/${applicationId}/deployments`, { trigger: 'manual' })
-  } catch (err) {
-    const detail = redactVariableValues(errorText(err), values)
-    const savedSummary =
-      savedVolumes.length > 0
-        ? 'Application, environment variables, and storage were saved'
-        : 'Application and environment variables were saved'
-    throw new CreateFlowError(
-      'deployment',
-      `${savedSummary}, but the deployment could not be queued (${detail}). Press Deploy again to retry the deployment.`,
-      applicationId,
-      bodies.map((body) => body.key),
-      savedVolumes,
-    )
-  }
 
   return { applicationId }
 }

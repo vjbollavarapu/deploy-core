@@ -124,7 +124,7 @@ export function StepReview({ values, projects = [], servers = [] }: StepReviewPr
           />
           <SummaryRow
             label="Secrets"
-            value="Included from existing scopes. Secret values are not entered here."
+            value="Configured on the application after it is saved. Secret values are not entered here."
           />
           <SummaryRow label="Storage" value={storageSummary(values.volumes)} />
         </CardContent>
@@ -133,14 +133,14 @@ export function StepReview({ values, projects = [], servers = [] }: StepReviewPr
   )
 }
 
-interface StepDeployProps {
+interface StepCreateProps {
   values: CreateApplicationValues
   pending: boolean
   projects?: PlacementProject[]
   servers?: PlacementServer[]
 }
 
-export function StepDeploy({ values, pending, projects = [], servers = [] }: StepDeployProps) {
+export function StepCreate({ values, pending, projects = [], servers = [] }: StepCreateProps) {
   const project =
     projects.find((item) => item.id === values.projectId) ??
     mockProjects.find((item) => item.id === values.projectId)
@@ -168,7 +168,7 @@ export function StepDeploy({ values, pending, projects = [], servers = [] }: Ste
     <div className="flex flex-col gap-3">
       <div className="rounded-lg border border-border bg-muted/20 p-4">
         <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-          Pre-flight deployment checklist
+          Save checklist
         </h4>
         <div className="grid gap-2 text-xs">
           <div className="flex items-center justify-between py-1 border-b border-border/50">
@@ -216,14 +216,12 @@ export function StepDeploy({ values, pending, projects = [], servers = [] }: Ste
         )}
         <div className="space-y-1">
           <p className="text-sm font-medium text-foreground">
-            {pending
-              ? `Creating ${values.name} & starting deployment…`
-              : `Ready to deploy ${values.name}`}
+            {pending ? `Saving ${values.name}…` : `Ready to save ${values.name}`}
           </p>
           <p className="text-xs text-muted-foreground">
             {pending
-              ? 'Creating the application, saving environment variables, attaching storage, then queueing the deployment.'
-              : 'Clicking “Deploy” saves the application and its environment variables, attaches any storage, then queues the deployment.'}
+              ? 'Saving the application, its environment variables, and any storage. No deployment is started.'
+              : 'Create application saves the application and its non-secret environment variables, and creates or attaches configured storage. No deployment starts. Add secrets on the application page, then deploy when the configuration is complete.'}
           </p>
         </div>
       </div>

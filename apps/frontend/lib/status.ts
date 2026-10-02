@@ -21,6 +21,7 @@ export const STATUS_CONFIG: Record<Status, StatusConfig> = {
   offline: { label: 'Offline', tone: 'inactive' },
   maintenance: { label: 'Maintenance', tone: 'info' },
   cancelled: { label: 'Cancelled', tone: 'inactive' },
+  draft: { label: 'Not deployed', tone: 'inactive' },
   unknown: { label: 'Unknown', tone: 'inactive' },
 }
 
@@ -37,6 +38,7 @@ export const STATUS = {
   OFFLINE: 'offline',
   MAINTENANCE: 'maintenance',
   CANCELLED: 'cancelled',
+  DRAFT: 'draft',
   UNKNOWN: 'unknown',
 } as const satisfies Record<string, Status>
 

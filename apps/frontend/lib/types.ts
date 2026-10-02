@@ -10,6 +10,7 @@ export type Status =
   | 'offline'
   | 'maintenance'
   | 'cancelled'
+  | 'draft'
   | 'unknown'
 
 export type StatusTone = 'success' | 'warning' | 'critical' | 'info' | 'inactive'

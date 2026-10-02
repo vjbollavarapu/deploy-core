@@ -3,9 +3,14 @@ import { describe, it } from 'node:test'
 import {
   applicationDeploymentsPath,
   applicationLogsPath,
+  applicationRevisionsPath,
   applicationSectionMode,
   applicationVariablesPath,
   loadApplicationDetail,
+  loadProductionApplicationRevisions,
+  mapApplicationStatus,
+  mapProductionApplicationListItem,
+  mapRevisionSummary,
   loadDeploymentDetail,
   loadProductionApplication,
   loadProductionApplicationDeployments,
@@ -168,6 +173,49 @@ describe('production application sections', () => {
     assert.equal(result.value[0].key, 'REDIS_PORT')
     assert.equal(result.value[0].value, '6379')
     assert.deepEqual(syntheticMarkers(result.value), [])
+  })
+
+  it('renders draft without Unknown and does not invent a revision', () => {
+    assert.equal(mapApplicationStatus('draft'), 'draft')
+    assert.notEqual(mapApplicationStatus('draft'), 'unknown')
+    const row = mapProductionApplicationListItem({
+      status: 'draft',
+      projectName: 'platform',
+      targetServerId: null,
+      repositoryUrl: null,
+      gitBranch: null,
+    })
+    assert.equal(row.status, 'draft')
+    assert.equal(row.revision, '—')
+    assert.equal(row.domain, '—')
+    assert.equal(row.lastDeployment, '—')
+    assert.equal(row.server, '—')
+    assert.deepEqual(syntheticMarkers(row), [])
+  })
+
+  it('lists zero revisions as an empty result', async () => {
+    const path = applicationRevisionsPath(APP_ID)
+    const api = client({ [path]: () => ({ items: [] }) })
+    const result = await loadProductionApplicationRevisions(api, APP_ID)
+    assert.equal(result.kind, 'ok')
+    if (result.kind !== 'ok') return
+    assert.deepEqual(result.value, [])
+  })
+
+  it('keeps revision metadata and drops snapshots', () => {
+    const summary = mapRevisionSummary({
+      id: 'rev-1',
+      revisionNumber: 4,
+      status: 'ACTIVE',
+      createdAt: '2026-10-02T10:00:00.000Z',
+      effectiveConfig: { SECRET_KEY: 'plaintext-secret' },
+      variableSnapshot: { DATABASE_URL: 'postgres://secret' },
+      secretRefs: [{ name: 'SECRET_KEY', value: 'plaintext-secret' }],
+    })
+    assert.equal(summary.revisionNumber, 4)
+    assert.equal(summary.status, 'ACTIVE')
+    assert.equal(JSON.stringify(summary).includes('plaintext-secret'), false)
+    assert.equal(JSON.stringify(summary).includes('postgres://secret'), false)
   })
 
   it('points logs at the application logs endpoint', () => {
