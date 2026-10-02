@@ -29,6 +29,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.Handle("GET /volumes/{volumeId}", h.auth.RequireAuth(http.HandlerFunc(h.Get)))
 	mux.Handle("PATCH /volumes/{volumeId}", h.auth.RequireAuth(http.HandlerFunc(h.Update)))
 	mux.Handle("POST /volumes/{volumeId}/inspect", h.auth.RequireAuth(http.HandlerFunc(h.Inspect)))
+	mux.Handle("POST /volumes/{volumeId}/retry", h.auth.RequireAuth(http.HandlerFunc(h.RetryCreate)))
 	mux.Handle("POST /volumes/{volumeId}/attach", h.auth.RequireAuth(http.HandlerFunc(h.Attach)))
 	mux.Handle("POST /volumes/{volumeId}/detach", h.auth.RequireAuth(http.HandlerFunc(h.Detach)))
 	mux.Handle("DELETE /volumes/{volumeId}", h.auth.RequireAuth(http.HandlerFunc(h.Delete)))
@@ -164,6 +165,20 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	vol, err := h.svc.Get(r.Context(), user.ID, id)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"volume": toResponse(vol)})
+}
+
+func (h *Handler) RetryCreate(w http.ResponseWriter, r *http.Request) {
+	user, id, err := actorAndID(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	vol, err := h.svc.RetryCreate(r.Context(), user.ID, id, auditMeta(r))
 	if err != nil {
 		writeErr(w, r, err)
 		return

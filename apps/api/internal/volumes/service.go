@@ -81,13 +81,7 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 		return Volume{}, err
 	}
 
-	cmd, err := s.issue(ctx, v, protocol.OpCreateVolume, map[string]any{
-		"name":           v.Name,
-		"driver":         v.Driver,
-		"labels":         v.Labels,
-		"organizationId": v.OrganizationID.String(),
-		"volumeId":       v.ID.String(),
-	}, &actorID)
+	cmd, err := s.issue(ctx, v, protocol.OpCreateVolume, createVolumeCommandPayload(v), &actorID)
 	if err != nil {
 		_, _ = s.repo.SetState(ctx, v.ID, StateFailed, nil, nil, nil, err.Error())
 		return Volume{}, err
@@ -164,6 +158,42 @@ func (s *Service) Get(ctx context.Context, actorID, id uuid.UUID) (Volume, error
 	if err := s.authz.RequirePermission(ctx, actorID, v.OrganizationID, rbac.ServerRead); err != nil {
 		return Volume{}, err
 	}
+	return v, nil
+}
+
+// RetryCreate requeues CREATE_VOLUME for a volume that failed before Docker created it.
+func (s *Service) RetryCreate(ctx context.Context, actorID, id uuid.UUID, meta AuditMeta) (Volume, error) {
+	v, err := s.repo.Get(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Volume{}, apierror.NotFoundCode(apierror.CodeVolumeNotFound, "volume not found")
+		}
+		return Volume{}, err
+	}
+	if err := s.authz.RequirePermission(ctx, actorID, v.OrganizationID, rbac.ServerUpdate); err != nil {
+		return Volume{}, err
+	}
+	if v.AttachedResourceID != nil || v.State == StateAttached {
+		return Volume{}, apierror.Conflict("cannot retry create for an attached volume")
+	}
+	if v.DockerName != nil && strings.TrimSpace(*v.DockerName) != "" {
+		return Volume{}, apierror.Conflict("cannot retry create after a docker volume exists")
+	}
+	if v.State != StateFailed {
+		return Volume{}, apierror.Conflict("volume create can only be retried from FAILED")
+	}
+	cmd, err := s.issue(ctx, v, protocol.OpCreateVolume, createVolumeCommandPayload(v), &actorID)
+	if err != nil {
+		return Volume{}, err
+	}
+	v, err = s.repo.SetState(ctx, v.ID, StateCreating, &cmd.ID, nil, nil, "")
+	if err != nil {
+		return Volume{}, err
+	}
+	s.writeAudit(ctx, &v.OrganizationID, &actorID, "volume.create.retry", "volume", v.ID.String(), meta,
+		map[string]any{"state": StateFailed},
+		map[string]any{"state": StateCreating, "commandId": cmd.ID.String()},
+	)
 	return v, nil
 }
 
@@ -443,6 +473,37 @@ func (s *Service) HandleCommandCompletion(ctx context.Context, cmd agentcmd.Comm
 		}
 	}
 	return err
+}
+
+func createVolumeCommandPayload(v Volume) map[string]any {
+	return map[string]any{
+		"name":           v.Name,
+		"driver":         v.Driver,
+		"labels":         dockerCommandLabels(v.Labels),
+		"organizationId": v.OrganizationID.String(),
+		"volumeId":       v.ID.String(),
+	}
+}
+
+// dockerCommandLabels copies string Docker labels. readOnly and other non-string
+// values stay on the control-plane volume row and are not sent to the agent.
+func dockerCommandLabels(labels map[string]any) map[string]string {
+	out := map[string]string{}
+	for key, value := range labels {
+		if key == "readOnly" {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		out[key] = text
+	}
+	return out
 }
 
 func (s *Service) issue(ctx context.Context, v Volume, op string, payload map[string]any, issuedBy *uuid.UUID) (agentcmd.Command, error) {

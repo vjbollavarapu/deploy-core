@@ -437,7 +437,7 @@ describe('create application storage', () => {
 
   it('does not deploy when volume creation failed', async () => {
     const harness = client(
-      {},
+      { '/volumes/vol-1/retry': () => ({ volume: { id: 'vol-1', state: 'CREATING' } }) },
       { '/volumes/vol-1': () => ({ volume: { id: 'vol-1', state: 'FAILED' } }) },
     )
     await assert.rejects(
@@ -461,6 +461,71 @@ describe('create application storage', () => {
         return true
       },
     )
+    assert.equal(harness.calls.filter((call) => call.path === '/volumes/vol-1/retry').length, 1)
+    assert.equal(harness.calls.some((call) => call.path === '/volumes'), false)
+    assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
+  })
+
+  it('retries a failed volume on the same id and deploys only after it is ready', async () => {
+    let reads = 0
+    const harness = client(
+      {
+        '/volumes/vol-1/retry': () => ({ volume: { id: 'vol-1', state: 'CREATING' } }),
+        '/volumes/vol-1/attach': () => ({}),
+        '/applications/app-1/deployments': () => ({}),
+      },
+      {
+        '/volumes/vol-1': () => {
+          reads += 1
+          if (reads === 1) return { volume: { id: 'vol-1', state: 'FAILED', dockerName: null } }
+          return { volume: { id: 'vol-1', state: 'READY', name: 'redis-data' } }
+        },
+      },
+    )
+    await createApplicationWithVariables(harness.client, {
+      organizationId: 'org-1',
+      serverId: 'server-1',
+      applicationBody: { name: 'redis' },
+      envVars: [],
+      volumes: [volume],
+      resume: {
+        applicationId: 'app-1',
+        savedKeys: [],
+        savedVolumes: [{ name: 'redis-data', volumeId: 'vol-1', mountPath: '/data', readOnly: false, attached: false }],
+      },
+    })
+    assert.deepEqual(
+      harness.calls.map((call) => call.path),
+      ['/volumes/vol-1', '/volumes/vol-1/retry', '/volumes/vol-1', '/volumes/vol-1/attach', '/applications/app-1/deployments'],
+    )
+  })
+
+  it('does not retry or deploy a failed volume that already has a docker name', async () => {
+    const harness = client(
+      { '/volumes/vol-1/retry': () => ({}) },
+      { '/volumes/vol-1': () => ({ volume: { id: 'vol-1', state: 'FAILED', dockerName: 'redis-data' } }) },
+    )
+    await assert.rejects(
+      () =>
+        createApplicationWithVariables(harness.client, {
+          organizationId: 'org-1',
+          serverId: 'server-1',
+          applicationBody: { name: 'redis' },
+          envVars: [],
+          volumes: [volume],
+          resume: {
+            applicationId: 'app-1',
+            savedKeys: [],
+            savedVolumes: [{ name: 'redis-data', volumeId: 'vol-1', mountPath: '/data', readOnly: false, attached: false }],
+          },
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof CreateFlowError)
+        assert.equal(err.phase, 'storage')
+        return true
+      },
+    )
+    assert.equal(harness.calls.some((call) => call.path === '/volumes/vol-1/retry'), false)
     assert.equal(harness.calls.some((call) => call.path.includes('/deployments')), false)
   })
 

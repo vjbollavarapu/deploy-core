@@ -141,6 +141,12 @@ async function findVolumeByName(
   return (page.items ?? []).find((item) => item.name && sameVolumeName(item.name, name) && item.state !== 'DELETED')
 }
 
+function canRetryFailedVolume(volume: VolumeRecord): boolean {
+  const dockerName = (volume.dockerName ?? '').trim()
+  const attachedID = (volume.attachedResourceId ?? '').trim()
+  return volume.state === 'FAILED' && dockerName.length === 0 && attachedID.length === 0
+}
+
 async function waitForVolumeReady(
   client: FlowClient,
   volumeId: string,
@@ -283,6 +289,32 @@ async function ensureApplicationVolumes(
           input.savedKeys,
           progress,
         )
+      }
+      if (ready.state === 'FAILED' && canRetryFailedVolume(ready)) {
+        try {
+          await client.post(`/volumes/${current.volumeId}/retry`, {})
+        } catch (err) {
+          const detail = redactVariableValues(errorText(err), input.secretValues)
+          throw new CreateFlowError(
+            'storage',
+            `Volume ${volume.name} failed to create and could not be retried (${detail}). Deployment was not queued.`,
+            input.applicationId,
+            input.savedKeys,
+            progress,
+          )
+        }
+        try {
+          ready = await waitForVolumeReady(client, current.volumeId, input.applicationId)
+        } catch (err) {
+          const detail = redactVariableValues(errorText(err), input.secretValues)
+          throw new CreateFlowError(
+            'storage',
+            `Volume ${volume.name} is not ready (${detail}). Deployment was not queued. Press Deploy again to keep waiting on this volume.`,
+            input.applicationId,
+            input.savedKeys,
+            progress,
+          )
+        }
       }
       if (ready.state === 'FAILED') {
         throw new CreateFlowError(

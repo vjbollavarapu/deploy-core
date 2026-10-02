@@ -417,6 +417,163 @@ func TestPreDeploymentApplicationVolumeSnapshotsRevision(t *testing.T) {
 	}
 }
 
+func TestCreateVolumeLabelContractAndFailedRetry(t *testing.T) {
+	pool := testPool(t)
+	srv := testServer(t, pool)
+	ctx := context.Background()
+
+	ownerTok := register(t, srv, "owner-vollabels-"+uuid.NewString()+"@example.com", "password123", "Owner")
+	orgID := createOrg(t, srv, ownerTok, "Labels Org", "labels-"+uuid.NewString()[:8])
+	serverID := createServer(t, srv, ownerTok, orgID)
+	agentCred := registerAgent(t, srv, ownerTok, serverID)
+
+	create := doJSON(t, srv, http.MethodPost, "/api/v1/volumes", mustJSON(map[string]any{
+		"organizationId": orgID, "serverId": serverID, "name": "app-data", "mountPath": "/data",
+		"labels": map[string]any{"readOnly": false, "priority": 1, "tier": "app"},
+	}), ownerTok)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", create.Code, create.Body.String())
+	}
+	var created struct {
+		Volume struct {
+			ID            string         `json:"id"`
+			Labels        map[string]any `json:"labels"`
+			LastCommandID *string        `json:"lastCommandId"`
+		} `json:"volume"`
+	}
+	decode(t, create, &created)
+	if created.Volume.Labels["readOnly"] != false {
+		t.Fatalf("stored labels=%v", created.Volume.Labels)
+	}
+	if created.Volume.LastCommandID == nil {
+		t.Fatal("expected create command")
+	}
+	assertCreatePayload(t, pool, *created.Volume.LastCommandID, orgID, created.Volume.ID, "app-data")
+
+	failed := doJSON(t, srv, http.MethodPost, "/api/v1/agents/commands/"+*created.Volume.LastCommandID+"/status",
+		mustJSON(map[string]any{"status": "failed", "errorCode": "INVALID_PAYLOAD", "errorMessage": "could not decode payload"}), agentCred)
+	if failed.Code != http.StatusOK {
+		t.Fatalf("fail status=%d body=%s", failed.Code, failed.Body.String())
+	}
+	got := getVolume(t, srv, ownerTok, created.Volume.ID)
+	if got.State != volumes.StateFailed || got.DockerName != nil || got.LastError == "" || got.Labels["readOnly"] != false {
+		t.Fatalf("failed volume=%#v", got)
+	}
+
+	unsafeReady := doJSON(t, srv, http.MethodPost, "/api/v1/volumes/"+created.Volume.ID+"/retry", nil, ownerTok)
+	// Still FAILED and unattached with no docker name, so this call is the valid retry.
+	if unsafeReady.Code != http.StatusOK {
+		t.Fatalf("retry status=%d body=%s", unsafeReady.Code, unsafeReady.Body.String())
+	}
+	var retried struct {
+		Volume struct {
+			ID            string         `json:"id"`
+			State         string         `json:"state"`
+			LastError     string         `json:"lastError"`
+			Labels        map[string]any `json:"labels"`
+			LastCommandID *string        `json:"lastCommandId"`
+			DockerName    *string        `json:"dockerName"`
+		} `json:"volume"`
+	}
+	decode(t, unsafeReady, &retried)
+	if retried.Volume.ID != created.Volume.ID || retried.Volume.State != volumes.StateCreating || retried.Volume.LastError != "" || retried.Volume.DockerName != nil {
+		t.Fatalf("retried=%#v", retried.Volume)
+	}
+	if retried.Volume.Labels["readOnly"] != false {
+		t.Fatalf("readOnly lost: %#v", retried.Volume.Labels)
+	}
+	if retried.Volume.LastCommandID == nil || *retried.Volume.LastCommandID == *created.Volume.LastCommandID {
+		t.Fatalf("expected a new command, got %#v", retried.Volume.LastCommandID)
+	}
+	assertCreatePayload(t, pool, *retried.Volume.LastCommandID, orgID, created.Volume.ID, "app-data")
+
+	done := doJSON(t, srv, http.MethodPost, "/api/v1/agents/commands/"+*retried.Volume.LastCommandID+"/status",
+		mustJSON(map[string]any{"status": "completed", "result": map[string]any{"dockerName": "app-data"}}), agentCred)
+	if done.Code != http.StatusOK {
+		t.Fatalf("complete status=%d body=%s", done.Code, done.Body.String())
+	}
+	ready := getVolume(t, srv, ownerTok, created.Volume.ID)
+	if ready.State != volumes.StateReady || ready.DockerName == nil || *ready.DockerName != "app-data" || ready.Labels["readOnly"] != false {
+		t.Fatalf("ready=%#v", ready)
+	}
+	again := doJSON(t, srv, http.MethodPost, "/api/v1/volumes/"+created.Volume.ID+"/retry", nil, ownerTok)
+	if again.Code != http.StatusConflict {
+		t.Fatalf("retry after ready status=%d body=%s", again.Code, again.Body.String())
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE volumes SET state = 'FAILED', docker_name = 'app-data', last_error = 'stale' WHERE id = $1`, created.Volume.ID); err != nil {
+		t.Fatal(err)
+	}
+	named := doJSON(t, srv, http.MethodPost, "/api/v1/volumes/"+created.Volume.ID+"/retry", nil, ownerTok)
+	if named.Code != http.StatusConflict {
+		t.Fatalf("retry with docker name status=%d body=%s", named.Code, named.Body.String())
+	}
+	if _, err := pool.Exec(ctx, `UPDATE volumes SET state = 'FAILED', docker_name = NULL, attached_resource_type = 'application', attached_resource_id = $2 WHERE id = $1`, created.Volume.ID, uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+	attached := doJSON(t, srv, http.MethodPost, "/api/v1/volumes/"+created.Volume.ID+"/retry", nil, ownerTok)
+	if attached.Code != http.StatusConflict {
+		t.Fatalf("retry attached status=%d body=%s", attached.Code, attached.Body.String())
+	}
+}
+
+func assertCreatePayload(t *testing.T, pool *pgxpool.Pool, commandID, orgID, volumeID, name string) {
+	t.Helper()
+	var raw []byte
+	if err := pool.QueryRow(context.Background(), `SELECT payload FROM agent_commands WHERE id = $1`, commandID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["organizationId"] != orgID || payload["volumeId"] != volumeID || payload["name"] != name {
+		t.Fatalf("structured metadata=%#v", payload)
+	}
+	labels, ok := payload["labels"].(map[string]any)
+	if !ok {
+		t.Fatalf("labels=%#v", payload["labels"])
+	}
+	if _, exists := labels["readOnly"]; exists {
+		t.Fatalf("readOnly in command labels: %#v", labels)
+	}
+	for key, value := range labels {
+		text, isString := value.(string)
+		if !isString || text == "" {
+			t.Fatalf("label %s is not a string: %#v", key, value)
+		}
+	}
+	if labels["deploycore.managed"] != "true" || labels["deploycore.owner"] != "platform" || labels["deploycore.organization_id"] != orgID || labels["tier"] != "app" {
+		t.Fatalf("docker labels=%#v", labels)
+	}
+	if _, exists := labels["priority"]; exists {
+		t.Fatalf("numeric label forwarded: %#v", labels)
+	}
+}
+
+func getVolume(t *testing.T, srv *server.Server, token, id string) struct {
+	State      string         `json:"state"`
+	DockerName *string        `json:"dockerName"`
+	LastError  string         `json:"lastError"`
+	Labels     map[string]any `json:"labels"`
+} {
+	t.Helper()
+	rec := doJSON(t, srv, http.MethodGet, "/api/v1/volumes/"+id, nil, token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get volume status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Volume struct {
+			State      string         `json:"state"`
+			DockerName *string        `json:"dockerName"`
+			LastError  string         `json:"lastError"`
+			Labels     map[string]any `json:"labels"`
+		} `json:"volume"`
+	}
+	decode(t, rec, &body)
+	return body.Volume
+}
+
 func createServer(t *testing.T, srv *server.Server, token, orgID string) string {
 	t.Helper()
 	rec := doJSON(t, srv, http.MethodPost, "/api/v1/servers", mustJSON(map[string]any{
