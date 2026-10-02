@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { ApplicationOverview } from '@/components/deploycore/applications/application-overview'
+import { ProductionApplicationOverview } from '@/components/deploycore/applications/production-application-overview'
 import {
   findApplication,
   getApplicationActivity,
@@ -7,6 +8,7 @@ import {
   getLatestDeployment,
   getPrimaryDomain,
 } from '@/lib/applications'
+import { isDemoModeEnabled } from '@/lib/mock-isolation'
 
 export default async function ApplicationOverviewPage({
   params,
@@ -14,6 +16,9 @@ export default async function ApplicationOverviewPage({
   params: Promise<{ applicationId: string }>
 }) {
   const { applicationId } = await params
+  if (!isDemoModeEnabled()) {
+    return <ProductionApplicationOverview />
+  }
   const application = findApplication(applicationId)
   if (!application) notFound()
 

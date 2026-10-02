@@ -18,8 +18,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ApplicationLogsPanel } from '@/components/deploycore/applications/application-logs-panel'
 import { ApplicationVolumesPanel } from '@/components/deploycore/applications/application-volumes-panel'
+import { ProductionApplicationSection } from '@/components/deploycore/applications/production-application-section'
 import { ApplicationMetricsPanel } from '@/components/deploycore/applications/application-metrics'
 import { ApplicationSettingsPanel } from '@/components/deploycore/applications/application-settings-panel'
 import { DeploymentsTable } from '@/components/deploycore/deployments/deployments-table'
@@ -36,6 +36,8 @@ import {
   getApplicationSecrets,
   getApplicationVariables,
 } from '@/lib/applications'
+import { applicationSectionMode } from '@/lib/control-plane/detail-read'
+import { isDemoModeEnabled } from '@/lib/mock-isolation'
 
 export default async function ApplicationSectionPage({
   params,
@@ -43,8 +45,12 @@ export default async function ApplicationSectionPage({
   params: Promise<{ applicationId: string; section: string }>
 }) {
   const { applicationId, section } = await params
-  if (section === 'volumes') {
+  const mode = applicationSectionMode(section, isDemoModeEnabled())
+  if (mode === 'volumes') {
     return <ApplicationVolumesPanel applicationId={applicationId} />
+  }
+  if (mode === 'production') {
+    return <ProductionApplicationSection section={section} />
   }
   const application = findApplication(applicationId)
   if (!application) notFound()
@@ -226,14 +232,6 @@ export default async function ApplicationSectionPage({
         </CardContent>
       </Card>
     )
-  }
-
-  if (section === 'logs') {
-    return <ApplicationLogsPanel application={application} />
-  }
-
-  if (section === 'metrics') {
-    return <ApplicationMetricsPanel application={application} />
   }
 
   if (section === 'settings') {

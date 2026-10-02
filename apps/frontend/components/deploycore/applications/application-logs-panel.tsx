@@ -5,9 +5,18 @@ import { BuildLogViewer } from '@/components/platform/build-log-viewer'
 import { LoadingState } from '@/components/platform/loading-state'
 import { ErrorState } from '@/components/platform/error-state'
 import { apiClient } from '@/lib/api'
+import { applicationLogsPath } from '@/lib/control-plane/detail-read'
 import { isDemoModeEnabled } from '@/lib/mock-isolation'
 import { getApplicationLogs } from '@/lib/applications'
 import type { Application, LogLine } from '@/lib/types'
+
+interface LogsApplication {
+  id: string
+  name: string
+  environment: string
+  status: string
+  revision?: string
+}
 
 interface WireLogEntry {
   cursor?: string
@@ -43,7 +52,7 @@ function formatLogTimestamp(raw?: string): string {
   }
 }
 
-export function ApplicationLogsPanel({ application }: { application: Application }) {
+export function ApplicationLogsPanel({ application }: { application: LogsApplication }) {
   const [lines, setLines] = useState<LogLine[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -61,9 +70,7 @@ export function ApplicationLogsPanel({ application }: { application: Application
       setError(null)
 
       try {
-        const res = await apiClient.get<{ entries?: WireLogEntry[] }>(
-          `/applications/${application.id}/logs?follow=false`,
-        )
+        const res = await apiClient.get<{ entries?: WireLogEntry[] }>(applicationLogsPath(application.id))
 
         if (cancelled) return
 
@@ -75,19 +82,19 @@ export function ApplicationLogsPanel({ application }: { application: Application
             container: application.name,
             application: application.name,
             environment: application.environment,
-            revision: application.revision,
+            revision: application.revision ?? '',
             message: e.message || '',
           }))
           setLines(mapped)
         } else if (isDemoModeEnabled()) {
-          setLines(getApplicationLogs(application, 60))
+          setLines(getApplicationLogs(application as Application, 60))
         } else {
           setLines([])
         }
       } catch (err) {
         if (cancelled) return
         if (isDemoModeEnabled()) {
-          setLines(getApplicationLogs(application, 60))
+          setLines(getApplicationLogs(application as Application, 60))
         } else {
           setError(err instanceof Error ? err.message : 'Failed to fetch application logs')
         }

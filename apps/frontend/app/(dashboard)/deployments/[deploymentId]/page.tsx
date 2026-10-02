@@ -12,6 +12,7 @@ import { DeploymentPipeline } from '@/components/platform/deployment-pipeline'
 import { DeploymentEventTimeline } from '@/components/platform/deployment-event-timeline'
 import { BuildLogViewer } from '@/components/platform/build-log-viewer'
 import { DeploymentActions } from '@/components/deploycore/deployments/deployment-actions'
+import { ProductionDeploymentDetail } from '@/components/deploycore/deployments/production-deployment-detail'
 import {
   DEPLOYMENT_FAILURE_LABELS,
   DEPLOYMENT_PHASE_LABELS,
@@ -26,6 +27,9 @@ export default async function DeploymentDetailPage({
   params: Promise<{ deploymentId: string }>
 }) {
   const { deploymentId } = await params
+  if (!isDemoModeEnabled()) {
+    return <ProductionDeploymentDetail key={deploymentId} deploymentId={deploymentId} />
+  }
   const deployment = findDeployment(deploymentId)
   if (!deployment) notFound()
 

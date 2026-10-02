@@ -10,10 +10,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { DetailList } from '@/components/platform/detail-list'
 import { DestructiveConfirmDialog } from '@/components/platform/destructive-confirm-dialog'
 import { apiClient, ApiError } from '@/lib/api'
-import type { Application } from '@/lib/types'
 
 interface ApplicationSettingsPanelProps {
-  application: Application
+  application: {
+    id: string
+    name: string
+    runtime: string
+    project: string
+    environment: string
+    server: string
+    instances: number | string
+    repo: string
+    branch: string
+  }
 }
 
 export function ApplicationSettingsPanel({ application }: ApplicationSettingsPanelProps) {

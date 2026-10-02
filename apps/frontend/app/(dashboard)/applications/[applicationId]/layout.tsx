@@ -8,9 +8,10 @@ import { EnvironmentBadge } from '@/components/platform/environment-badge'
 import { PageContainer } from '@/components/platform/page-container'
 import { ResourceHeader } from '@/components/platform/resource-header'
 import { StatusBadge } from '@/components/platform/status-badge'
+import { ProductionApplicationShell } from '@/components/deploycore/applications/production-application-shell'
 import { findApplication, getPrimaryDomain } from '@/lib/applications'
 import { projects as rawProjects } from '@/lib/mock-data'
-import { getDemoFixtures } from '@/lib/mock-isolation'
+import { getDemoFixtures, isDemoModeEnabled } from '@/lib/mock-isolation'
 
 const projects = getDemoFixtures(rawProjects)
 
@@ -22,6 +23,13 @@ export default async function ApplicationLayout({
   params: Promise<{ applicationId: string }>
 }) {
   const { applicationId } = await params
+  if (!isDemoModeEnabled()) {
+    return (
+      <ProductionApplicationShell key={applicationId} applicationId={applicationId}>
+        {children}
+      </ProductionApplicationShell>
+    )
+  }
   const application = findApplication(applicationId)
   if (!application) {
     return (
