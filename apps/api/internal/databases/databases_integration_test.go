@@ -138,6 +138,36 @@ func TestManagedDatabaseProvisionFlow(t *testing.T) {
 	if bytes.Contains(payload, []byte("supersecret1")) {
 		t.Fatalf("password leaked into command payload: %s", payload)
 	}
+	var commandPayload map[string]any
+	if err := json.Unmarshal(payload, &commandPayload); err != nil {
+		t.Fatal(err)
+	}
+	var projectSlug, envSlug string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT p.slug, e.slug
+		FROM environments e
+		JOIN projects p ON p.id = e.project_id
+		WHERE e.id = $1`, envID).Scan(&projectSlug, &envSlug); err != nil {
+		t.Fatal(err)
+	}
+	wantNetwork, err := protocol.FormatPrivateNetworkName(projectSlug, envSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commandPayload["networkName"] != wantNetwork {
+		t.Fatalf("networkName=%v want %s", commandPayload["networkName"], wantNetwork)
+	}
+	if commandPayload["dnsAlias"] != "db-primary-pg" {
+		t.Fatalf("dnsAlias=%v", commandPayload["dnsAlias"])
+	}
+	for _, key := range []string{"projectId", "projectSlug", "environmentId", "environmentSlug", "organizationId"} {
+		if stringsTrim(commandPayload[key]) == "" {
+			t.Fatalf("payload missing %s: %s", key, payload)
+		}
+	}
+	if _, ok := commandPayload["password"]; ok {
+		t.Fatal("password key present in provision payload")
+	}
 
 	boot := doJSON(t, srv, http.MethodGet, "/api/v1/agents/databases/"+created.Database.ID+"/bootstrap", nil, agentCred)
 	if boot.Code != http.StatusOK {
@@ -170,14 +200,65 @@ func TestManagedDatabaseProvisionFlow(t *testing.T) {
 		Database struct {
 			Status             string  `json:"status"`
 			ContainerRuntimeID *string `json:"containerRuntimeId"`
+			PrivateHost        string  `json:"privateHost"`
+			Port               int     `json:"port"`
+			DatabaseName       string  `json:"databaseName"`
+			Username           string  `json:"username"`
+			Password           string  `json:"password"`
 		} `json:"database"`
 	}
 	decode(t, get, &got)
 	if got.Database.Status != databases.StatusRunning {
 		t.Fatalf("status=%s", got.Database.Status)
 	}
+	if got.Database.PrivateHost != "db-primary-pg" || got.Database.Port != 5432 {
+		t.Fatalf("connection metadata host=%s port=%d", got.Database.PrivateHost, got.Database.Port)
+	}
+	if got.Database.DatabaseName != "appdb" || got.Database.Username != "appuser" {
+		t.Fatalf("identity name=%s user=%s", got.Database.DatabaseName, got.Database.Username)
+	}
+	if got.Database.Password != "" || bytes.Contains(get.Body.Bytes(), []byte("supersecret1")) {
+		t.Fatal("detail response exposed the password")
+	}
 	if got.Database.ContainerRuntimeID == nil || *got.Database.ContainerRuntimeID != "ctr-pg-1" {
 		t.Fatalf("runtime=%v", got.Database.ContainerRuntimeID)
+	}
+
+	list := doJSON(t, srv, http.MethodGet, "/api/v1/databases?organizationId="+orgID, nil, ownerTok)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", list.Code, list.Body.String())
+	}
+	if bytes.Contains(list.Body.Bytes(), []byte("supersecret1")) {
+		t.Fatal("list response exposed the password")
+	}
+	if !bytes.Contains(list.Body.Bytes(), []byte(`"privateHost":"db-primary-pg"`)) && !bytes.Contains(list.Body.Bytes(), []byte(`"privateHost": "db-primary-pg"`)) {
+		t.Fatalf("list missing privateHost: %s", list.Body.String())
+	}
+	if !bytes.Contains(list.Body.Bytes(), []byte(`"port":5432`)) && !bytes.Contains(list.Body.Bytes(), []byte(`"port": 5432`)) {
+		t.Fatalf("list missing port: %s", list.Body.String())
+	}
+
+	clash := doJSON(t, srv, http.MethodPost, "/api/v1/databases", mustJSON(map[string]any{
+		"organizationId": orgID, "projectId": projectID, "environmentId": envID,
+		"serverId": serverID, "name": "primary-pg", "engine": "postgresql",
+		"databaseName": "otherdb", "username": "otheruser", "password": "supersecret1",
+	}), ownerTok)
+	if clash.Code != http.StatusConflict {
+		t.Fatalf("alias collision status=%d body=%s", clash.Code, clash.Body.String())
+	}
+
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO applications (organization_id, project_id, environment_id, name, slug, type, status)
+		VALUES ($1, $2, $3, 'App', 'db-billing', 'API', 'draft')`, orgID, projectID, envID); err != nil {
+		t.Fatal(err)
+	}
+	appClash := doJSON(t, srv, http.MethodPost, "/api/v1/databases", mustJSON(map[string]any{
+		"organizationId": orgID, "projectId": projectID, "environmentId": envID,
+		"serverId": serverID, "name": "billing", "engine": "postgresql",
+		"databaseName": "billingdb", "username": "billinguser", "password": "supersecret1",
+	}), ownerTok)
+	if appClash.Code != http.StatusConflict {
+		t.Fatalf("application alias collision status=%d body=%s", appClash.Code, appClash.Body.String())
 	}
 
 	reveal := doJSON(t, srv, http.MethodPost, "/api/v1/databases/"+created.Database.ID+"/credentials/reveal", nil, ownerTok)
@@ -201,7 +282,7 @@ func TestManagedDatabaseProvisionFlow(t *testing.T) {
 	// Volume name row soft-deleted; protected volume must not be auto-removed (no volume table yet).
 	var vol string
 	var status string
-	err := pool.QueryRow(context.Background(), `
+	err = pool.QueryRow(context.Background(), `
 		SELECT storage_volume_name, status FROM managed_databases WHERE id = $1`, created.Database.ID).
 		Scan(&vol, &status)
 	if err != nil {
@@ -212,6 +293,11 @@ func TestManagedDatabaseProvisionFlow(t *testing.T) {
 	}
 
 	_ = protocol.OpProvisionDatabase
+}
+
+func stringsTrim(v any) string {
+	s, _ := v.(string)
+	return s
 }
 
 func createServer(t *testing.T, srv *server.Server, token, orgID string) string {

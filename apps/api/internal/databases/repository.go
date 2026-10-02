@@ -13,12 +13,14 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("databases: not found")
-	ErrConflict = errors.New("databases: conflict")
+	ErrNotFound      = errors.New("databases: not found")
+	ErrConflict      = errors.New("databases: conflict")
+	ErrAliasConflict = errors.New("databases: alias conflict")
 )
 
 type Repository interface {
-	ResolveEnvironment(ctx context.Context, environmentID uuid.UUID) (orgID, projectID uuid.UUID, err error)
+	ResolveEnvironment(ctx context.Context, environmentID uuid.UUID) (EnvironmentScope, error)
+	ApplicationSlugInEnvironment(ctx context.Context, environmentID uuid.UUID, slug string) (bool, error)
 	ServerInOrg(ctx context.Context, orgID, serverID uuid.UUID) (bool, error)
 	Create(ctx context.Context, d Database, cred credentialBlob, createdBy uuid.UUID) (Database, error)
 	Get(ctx context.Context, id uuid.UUID) (Database, *credentialBlob, error)
@@ -36,18 +38,28 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-func (r *PostgresRepository) ResolveEnvironment(ctx context.Context, environmentID uuid.UUID) (uuid.UUID, uuid.UUID, error) {
-	var orgID, projectID uuid.UUID
+func (r *PostgresRepository) ResolveEnvironment(ctx context.Context, environmentID uuid.UUID) (EnvironmentScope, error) {
+	var scope EnvironmentScope
 	err := r.pool.QueryRow(ctx, `
-		SELECT p.organization_id, e.project_id
+		SELECT p.organization_id, e.project_id, p.slug, e.id, e.slug
 		FROM environments e
 		JOIN projects p ON p.id = e.project_id
 		WHERE e.id = $1 AND e.deleted_at IS NULL AND p.deleted_at IS NULL`, environmentID).
-		Scan(&orgID, &projectID)
+		Scan(&scope.OrganizationID, &scope.ProjectID, &scope.ProjectSlug, &scope.EnvironmentID, &scope.EnvironmentSlug)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, uuid.Nil, ErrNotFound
+		return EnvironmentScope{}, ErrNotFound
 	}
-	return orgID, projectID, err
+	return scope, err
+}
+
+func (r *PostgresRepository) ApplicationSlugInEnvironment(ctx context.Context, environmentID uuid.UUID, slug string) (bool, error) {
+	var taken bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM applications
+			WHERE environment_id = $1 AND slug = $2 AND deleted_at IS NULL
+		)`, environmentID, slug).Scan(&taken)
+	return taken, err
 }
 
 func (r *PostgresRepository) ServerInOrg(ctx context.Context, orgID, serverID uuid.UUID) (bool, error) {
@@ -65,27 +77,30 @@ func (r *PostgresRepository) Create(ctx context.Context, d Database, cred creden
 	const q = `
 		INSERT INTO managed_databases (
 			organization_id, project_id, environment_id, server_id, name,
-			engine, engine_version, database_name, username,
+			engine, engine_version, database_name, username, dns_alias,
 			credential_ciphertext, credential_nonce, credential_key_id, credential_algorithm,
 			storage_volume_name, volume_protected, cpu_millis, memory_bytes,
 			status, backup_policy, created_by
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'AES-256-GCM',$13,$14,$15,$16,$17,$18,$19
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'AES-256-GCM',$14,$15,$16,$17,$18,$19,$20
 		)
 		RETURNING id, organization_id, project_id, environment_id, server_id, name,
-			engine, engine_version, database_name, username,
+			engine, engine_version, database_name, username, dns_alias,
 			storage_volume_name, volume_protected, cpu_millis, memory_bytes,
 			container_runtime_id, status, backup_policy, provision_command_id, last_error,
 			created_by, created_at, updated_at, deleted_at,
 			TRUE`
 	out, err := scanDatabase(r.pool.QueryRow(ctx, q,
 		d.OrganizationID, d.ProjectID, d.EnvironmentID, d.ServerID, d.Name,
-		d.Engine, d.EngineVersion, d.DatabaseName, d.Username,
+		d.Engine, d.EngineVersion, d.DatabaseName, d.Username, d.DNSAlias,
 		cred.Ciphertext, cred.Nonce, cred.KeyID,
 		d.StorageVolumeName, d.VolumeProtected, d.CPUMillis, d.MemoryBytes,
 		d.Status, policy, createdBy,
 	))
-	if isUniqueViolation(err) {
+	if constraint, ok := uniqueConstraint(err); ok {
+		if constraint == "managed_databases_env_dns_alias_active_uidx" {
+			return Database{}, ErrAliasConflict
+		}
 		return Database{}, ErrConflict
 	}
 	return out, err
@@ -94,7 +109,7 @@ func (r *PostgresRepository) Create(ctx context.Context, d Database, cred creden
 func (r *PostgresRepository) Get(ctx context.Context, id uuid.UUID) (Database, *credentialBlob, error) {
 	const q = `
 		SELECT id, organization_id, project_id, environment_id, server_id, name,
-			engine, engine_version, database_name, username,
+			engine, engine_version, database_name, username, dns_alias,
 			storage_volume_name, volume_protected, cpu_millis, memory_bytes,
 			container_runtime_id, status, backup_policy, provision_command_id, last_error,
 			created_by, created_at, updated_at, deleted_at,
@@ -108,7 +123,7 @@ func (r *PostgresRepository) Get(ctx context.Context, id uuid.UUID) (Database, *
 	var keyID string
 	err := r.pool.QueryRow(ctx, q, id).Scan(
 		&d.ID, &d.OrganizationID, &d.ProjectID, &d.EnvironmentID, &d.ServerID, &d.Name,
-		&d.Engine, &d.EngineVersion, &d.DatabaseName, &d.Username,
+		&d.Engine, &d.EngineVersion, &d.DatabaseName, &d.Username, &d.DNSAlias,
 		&d.StorageVolumeName, &d.VolumeProtected, &d.CPUMillis, &d.MemoryBytes,
 		&d.ContainerRuntimeID, &d.Status, &policy, &d.ProvisionCommandID, &d.LastError,
 		&d.CreatedBy, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt,
@@ -147,7 +162,7 @@ func (r *PostgresRepository) List(ctx context.Context, orgID uuid.UUID, projectI
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, organization_id, project_id, environment_id, server_id, name,
-			engine, engine_version, database_name, username,
+			engine, engine_version, database_name, username, dns_alias,
 			storage_volume_name, volume_protected, cpu_millis, memory_bytes,
 			container_runtime_id, status, backup_policy, provision_command_id, last_error,
 			created_by, created_at, updated_at, deleted_at,
@@ -196,7 +211,7 @@ func (r *PostgresRepository) Update(ctx context.Context, id uuid.UUID, d Databas
 			updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, organization_id, project_id, environment_id, server_id, name,
-			engine, engine_version, database_name, username,
+			engine, engine_version, database_name, username, dns_alias,
 			storage_volume_name, volume_protected, cpu_millis, memory_bytes,
 			container_runtime_id, status, backup_policy, provision_command_id, last_error,
 			created_by, created_at, updated_at, deleted_at,
@@ -239,7 +254,7 @@ func (r *PostgresRepository) SetProvisionState(ctx context.Context, id uuid.UUID
 			updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, organization_id, project_id, environment_id, server_id, name,
-			engine, engine_version, database_name, username,
+			engine, engine_version, database_name, username, dns_alias,
 			storage_volume_name, volume_protected, cpu_millis, memory_bytes,
 			container_runtime_id, status, backup_policy, provision_command_id, last_error,
 			created_by, created_at, updated_at, deleted_at,
@@ -260,7 +275,7 @@ func scanDatabase(row scannable) (Database, error) {
 	var policy []byte
 	err := row.Scan(
 		&d.ID, &d.OrganizationID, &d.ProjectID, &d.EnvironmentID, &d.ServerID, &d.Name,
-		&d.Engine, &d.EngineVersion, &d.DatabaseName, &d.Username,
+		&d.Engine, &d.EngineVersion, &d.DatabaseName, &d.Username, &d.DNSAlias,
 		&d.StorageVolumeName, &d.VolumeProtected, &d.CPUMillis, &d.MemoryBytes,
 		&d.ContainerRuntimeID, &d.Status, &policy, &d.ProvisionCommandID, &d.LastError,
 		&d.CreatedBy, &d.CreatedAt, &d.UpdatedAt, &d.DeletedAt,
@@ -283,7 +298,15 @@ func mapOrEmpty(m map[string]any) map[string]any {
 	return m
 }
 
-func isUniqueViolation(err error) bool {
+func uniqueConstraint(err error) (string, bool) {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return pgErr.ConstraintName, true
+	}
+	return "", false
+}
+
+func isUniqueViolation(err error) bool {
+	_, ok := uniqueConstraint(err)
+	return ok
 }

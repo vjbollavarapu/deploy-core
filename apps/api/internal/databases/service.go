@@ -58,26 +58,26 @@ func (s *Service) WithVolumeRegistrar(r VolumeRegistrar) *Service {
 }
 
 func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput, meta AuditMeta) (Database, error) {
-	orgID, projectID, err := s.repo.ResolveEnvironment(ctx, in.EnvironmentID)
+	scope, err := s.repo.ResolveEnvironment(ctx, in.EnvironmentID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return Database{}, apierror.NotFoundCode(apierror.CodeEnvironmentNotFound, "environment not found")
 		}
 		return Database{}, err
 	}
-	if in.ProjectID != uuid.Nil && in.ProjectID != projectID {
+	if in.ProjectID != uuid.Nil && in.ProjectID != scope.ProjectID {
 		return Database{}, apierror.Validation("projectId does not match environment", nil)
 	}
-	if in.OrganizationID != uuid.Nil && in.OrganizationID != orgID {
+	if in.OrganizationID != uuid.Nil && in.OrganizationID != scope.OrganizationID {
 		return Database{}, apierror.Validation("organizationId does not match environment", nil)
 	}
-	in.OrganizationID = orgID
-	in.ProjectID = projectID
+	in.OrganizationID = scope.OrganizationID
+	in.ProjectID = scope.ProjectID
 
-	if err := s.authz.RequirePermission(ctx, actorID, orgID, rbac.DatabaseCreate); err != nil {
+	if err := s.authz.RequirePermission(ctx, actorID, scope.OrganizationID, rbac.DatabaseCreate); err != nil {
 		return Database{}, err
 	}
-	ok, err := s.repo.ServerInOrg(ctx, orgID, in.ServerID)
+	ok, err := s.repo.ServerInOrg(ctx, scope.OrganizationID, in.ServerID)
 	if err != nil {
 		return Database{}, err
 	}
@@ -86,6 +86,17 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 	}
 
 	name := strings.TrimSpace(in.Name)
+	alias, err := DNSAlias(name)
+	if err != nil {
+		return Database{}, apierror.Validation(err.Error(), map[string]any{"field": "name"})
+	}
+	taken, err := s.repo.ApplicationSlugInEnvironment(ctx, scope.EnvironmentID, alias)
+	if err != nil {
+		return Database{}, err
+	}
+	if taken {
+		return Database{}, apierror.Conflict("database network alias collides with an application in this environment")
+	}
 	engine := strings.ToLower(strings.TrimSpace(in.Engine))
 	if engine == "" {
 		engine = EnginePostgreSQL
@@ -134,11 +145,12 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 	}
 
 	d, err := s.repo.Create(ctx, Database{
-		OrganizationID:    orgID,
-		ProjectID:         projectID,
+		OrganizationID:    scope.OrganizationID,
+		ProjectID:         scope.ProjectID,
 		EnvironmentID:     in.EnvironmentID,
 		ServerID:          in.ServerID,
 		Name:              name,
+		DNSAlias:          alias,
 		Engine:            engine,
 		EngineVersion:     version,
 		DatabaseName:      dbName,
@@ -151,6 +163,9 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 		BackupPolicy:      policy,
 	}, credentialBlob{Ciphertext: env.Ciphertext, Nonce: env.Nonce, KeyID: env.KeyID}, actorID)
 	if err != nil {
+		if errors.Is(err, ErrAliasConflict) {
+			return Database{}, apierror.Conflict("database network alias already exists in this environment")
+		}
 		if errors.Is(err, ErrConflict) {
 			return Database{}, apierror.Conflict("database name or volume already exists")
 		}
@@ -158,7 +173,7 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 	}
 
 	// Creation must occur through agent commands — no local Docker work here.
-	cmd, err := s.issueProvision(ctx, d, &actorID)
+	cmd, err := s.issueProvision(ctx, d, scope, &actorID)
 	if err != nil {
 		_, _ = s.repo.SetProvisionState(ctx, d.ID, StatusFailed, nil, nil, err.Error())
 		return Database{}, err
@@ -173,15 +188,15 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, in CreateInput,
 		}
 	}
 
-	s.writeAudit(ctx, &orgID, &actorID, "database.create", "database", d.ID.String(), meta, nil, map[string]any{
-		"name": d.Name, "engine": d.Engine, "engineVersion": d.EngineVersion,
+	s.writeAudit(ctx, &d.OrganizationID, &actorID, "database.create", "database", d.ID.String(), meta, nil, map[string]any{
+		"name": d.Name, "dnsAlias": d.DNSAlias, "engine": d.Engine, "engineVersion": d.EngineVersion,
 		"serverId": d.ServerID.String(), "storageVolumeName": d.StorageVolumeName,
 		"volumeProtected": true, "provisionCommandId": cmd.ID.String(),
 	})
 	return d, nil
 }
 
-func (s *Service) issueProvision(ctx context.Context, d Database, issuedBy *uuid.UUID) (agentcmd.Command, error) {
+func (s *Service) issueProvision(ctx context.Context, d Database, scope EnvironmentScope, issuedBy *uuid.UUID) (agentcmd.Command, error) {
 	if s.commands == nil {
 		return agentcmd.Command{}, apierror.Internal("command store not configured")
 	}
@@ -191,6 +206,13 @@ func (s *Service) issueProvision(ctx context.Context, d Database, issuedBy *uuid
 	if reqID != "" {
 		reqPtr = &reqID
 	}
+	networkName, err := protocol.FormatPrivateNetworkName(scope.ProjectSlug, scope.EnvironmentSlug)
+	if err != nil {
+		return agentcmd.Command{}, apierror.Validation("project or environment slug cannot form a private network name", nil)
+	}
+	if strings.TrimSpace(d.DNSAlias) == "" || !protocol.ValidDNSAlias(d.DNSAlias) {
+		return agentcmd.Command{}, apierror.Internal("database is missing a DNS alias")
+	}
 	payload := map[string]any{
 		"databaseId":        d.ID.String(),
 		"engine":            d.Engine,
@@ -199,6 +221,13 @@ func (s *Service) issueProvision(ctx context.Context, d Database, issuedBy *uuid
 		"username":          d.Username,
 		"storageVolumeName": d.StorageVolumeName,
 		"volumeProtected":   d.VolumeProtected,
+		"networkName":       networkName,
+		"dnsAlias":          d.DNSAlias,
+		"projectId":         scope.ProjectID.String(),
+		"projectSlug":       scope.ProjectSlug,
+		"environmentId":     scope.EnvironmentID.String(),
+		"environmentSlug":   scope.EnvironmentSlug,
+		"organizationId":    scope.OrganizationID.String(),
 		// Password is never embedded — agent fetches via bootstrap endpoint.
 	}
 	if d.CPUMillis != nil {

@@ -23,6 +23,7 @@ type DockerClient interface {
 	CreateVolume(ctx context.Context, req docker.CreateVolumeRequest) (docker.VolumeSummary, error)
 	InspectNetwork(ctx context.Context, name string) (docker.NetworkDetail, error)
 	CreateNetwork(ctx context.Context, req docker.CreateNetworkRequest) (string, error)
+	RemoveContainer(ctx context.Context, id string, force bool) error
 	InspectImage(ctx context.Context, ref string) (docker.ImageDetail, error)
 	PullImage(ctx context.Context, ref string, out io.Writer) error
 }
@@ -96,6 +97,9 @@ func (m *Manager) Provision(ctx context.Context, req ProvisionRequest) (*Databas
 	if err := ValidateImageVersion(req.EngineVersion); err != nil {
 		return nil, err
 	}
+	if err := validatePrivateAttachment(req.NetworkName, req.DNSAlias); err != nil {
+		return nil, err
+	}
 
 	containerName := FormatContainerName(req.DatabaseID)
 	imageName := FormatImageName(req.Engine, req.EngineVersion)
@@ -128,24 +132,7 @@ func (m *Manager) Provision(ctx context.Context, req ProvisionRequest) (*Databas
 		}
 	}
 
-	// 2. Ensure private network exists if specified
-	if req.NetworkName != "" {
-		if _, err := m.cli.InspectNetwork(ctx, req.NetworkName); err != nil {
-			m.log.Info("creating database network", slog.String("network", req.NetworkName))
-			netReq := docker.CreateNetworkRequest{
-				Name:   req.NetworkName,
-				Driver: "bridge",
-				Labels: map[string]string{
-					protocol.LabelManaged: "true",
-				},
-			}
-			if _, err := m.cli.CreateNetwork(ctx, netReq); err != nil {
-				return nil, fmt.Errorf("failed to create database network %s: %w", req.NetworkName, err)
-			}
-		}
-	}
-
-	// 3. Ensure image exists locally or pull it
+	// 2. Ensure image exists locally or pull it
 	if _, err := m.cli.InspectImage(ctx, imageName); err != nil {
 		m.log.Info("pulling database image", slog.String("image", imageName))
 		if pullErr := m.cli.PullImage(ctx, imageName, nil); pullErr != nil {
@@ -153,33 +140,38 @@ func (m *Manager) Provision(ctx context.Context, req ProvisionRequest) (*Databas
 		}
 	}
 
-	// 4. Check if container already exists
+	// 3. An existing container must already be on this private network with the alias.
+	// Otherwise recreate it onto that network and keep the named volume.
 	existing, err := m.cli.InspectContainer(ctx, containerName)
 	if err == nil {
 		if ownErr := VerifyManagedDatabaseContainer(existing, req.DatabaseID); ownErr != nil {
 			return nil, fmt.Errorf("refusing to reuse container %s: %w", containerName, ownErr)
 		}
-		// Container exists; start if stopped
-		if !existing.State.Running {
-			if startErr := m.cli.StartContainer(ctx, existing.ID); startErr != nil {
-				return nil, fmt.Errorf("failed to start existing database container: %w", startErr)
+		if privateAttachmentReady(existing, req.NetworkName, req.DNSAlias) {
+			if !existing.State.Running {
+				if startErr := m.cli.StartContainer(ctx, existing.ID); startErr != nil {
+					return nil, fmt.Errorf("failed to start existing database container: %w", startErr)
+				}
+			}
+			return &DatabaseState{
+				DatabaseID:    req.DatabaseID,
+				ContainerID:   existing.ID,
+				ContainerName: containerName,
+				Status:        "running",
+				UpdatedAt:     time.Now().UTC(),
+			}, nil
+		}
+		if existing.State.Running {
+			if stopErr := m.cli.StopContainer(ctx, existing.ID, 15*time.Second); stopErr != nil {
+				return nil, fmt.Errorf("failed to stop database container for private-network attach: %w", stopErr)
 			}
 		}
-		return &DatabaseState{
-			DatabaseID:    req.DatabaseID,
-			ContainerID:   existing.ID,
-			ContainerName: containerName,
-			Status:        "running",
-			UpdatedAt:     time.Now().UTC(),
-		}, nil
+		if rmErr := m.cli.RemoveContainer(ctx, existing.ID, true); rmErr != nil {
+			return nil, fmt.Errorf("failed to recreate database container onto private network: %w", rmErr)
+		}
 	}
 
-	// 5. Create container with stateful volume and private networking
-	var networks []string
-	if req.NetworkName != "" {
-		networks = append(networks, req.NetworkName)
-	}
-
+	// 4. Create container on the private network only. No host port and no proxy network.
 	createReq := docker.CreateContainerRequest{
 		Name:  containerName,
 		Image: imageName,
@@ -196,7 +188,10 @@ func (m *Manager) Provision(ctx context.Context, req ProvisionRequest) (*Databas
 				ReadOnly:   false,
 			},
 		},
-		Networks:      networks,
+		Networks: []string{req.NetworkName},
+		NetworkAliases: map[string][]string{
+			req.NetworkName: {req.DNSAlias},
+		},
 		CPUMillis:     req.CPUMillis,
 		MemoryBytes:   req.MemoryBytes,
 		RestartPolicy: docker.RestartUnlessStopped,
@@ -224,7 +219,7 @@ func (m *Manager) Provision(ctx context.Context, req ProvisionRequest) (*Databas
 		return nil, fmt.Errorf("failed to create database container: %w", err)
 	}
 
-	// 6. Start container
+	// 5. Start container
 	if err := m.cli.StartContainer(ctx, res.ID); err != nil {
 		return nil, fmt.Errorf("failed to start database container: %w", err)
 	}
@@ -271,4 +266,59 @@ func (m *Manager) Stop(ctx context.Context, databaseID string, timeout time.Dura
 		timeout = 15 * time.Second
 	}
 	return m.cli.StopContainer(ctx, detail.ID, timeout)
+}
+
+func validatePrivateAttachment(networkName, alias string) error {
+	networkName = strings.TrimSpace(networkName)
+	alias = strings.TrimSpace(alias)
+	switch networkName {
+	case "", "bridge", "default", "host", "none", protocol.ProxyNetworkName:
+		return fmt.Errorf("database requires the project private network, got %q", networkName)
+	}
+	if !protocol.ValidDNSAlias(alias) {
+		return fmt.Errorf("database DNS alias %q is not valid", alias)
+	}
+	return nil
+}
+
+func privateAttachmentReady(detail docker.ContainerDetail, networkName, alias string) bool {
+	if detail.NetworkMode != networkName {
+		return false
+	}
+	if attachedTo(detail, protocol.ProxyNetworkName) {
+		return false
+	}
+	names := attachmentNames(detail)
+	if len(names) != 1 || !names[networkName] {
+		return false
+	}
+	for _, candidate := range detail.Aliases[networkName] {
+		if candidate == alias {
+			return true
+		}
+	}
+	return false
+}
+
+func attachedTo(detail docker.ContainerDetail, name string) bool {
+	if _, ok := detail.Networks[name]; ok {
+		return true
+	}
+	_, ok := detail.Aliases[name]
+	return ok
+}
+
+func attachmentNames(detail docker.ContainerDetail) map[string]bool {
+	names := map[string]bool{}
+	for name := range detail.Networks {
+		if strings.TrimSpace(name) != "" {
+			names[name] = true
+		}
+	}
+	for name := range detail.Aliases {
+		if strings.TrimSpace(name) != "" {
+			names[name] = true
+		}
+	}
+	return names
 }

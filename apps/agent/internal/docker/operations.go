@@ -197,14 +197,21 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (ContainerDeta
 
 	ipAddress := ""
 	networks := make(map[string]string)
+	aliases := make(map[string][]string)
 	if info.NetworkSettings != nil {
 		ipAddress = info.NetworkSettings.IPAddress
 		for netName, ep := range info.NetworkSettings.Networks {
-			if ep != nil && ep.IPAddress != "" {
+			if ep == nil {
+				continue
+			}
+			aliases[netName] = append([]string(nil), ep.Aliases...)
+			if ep.IPAddress != "" {
 				networks[netName] = ep.IPAddress
 				if ipAddress == "" {
 					ipAddress = ep.IPAddress
 				}
+			} else if _, ok := networks[netName]; !ok {
+				networks[netName] = ""
 			}
 		}
 	}
@@ -225,6 +232,7 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (ContainerDeta
 		NetworkMode:  netMode,
 		IPAddress:    ipAddress,
 		Networks:     networks,
+		Aliases:      aliases,
 	}, nil
 }
 

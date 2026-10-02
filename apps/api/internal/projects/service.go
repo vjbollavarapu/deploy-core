@@ -371,6 +371,11 @@ func validateSlug(slug string) error {
 	return nil
 }
 
+// Slugify is the canonical project/environment slug sanitizer.
+func Slugify(name string) string {
+	return slugify(name)
+}
+
 func slugify(name string) string {
 	var b strings.Builder
 	lastHyphen := false

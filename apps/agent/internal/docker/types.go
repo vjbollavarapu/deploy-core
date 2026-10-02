@@ -66,7 +66,8 @@ type ContainerDetail struct {
 	Mounts       []MountPoint
 	NetworkMode  string
 	IPAddress    string
-	Networks     map[string]string // network name -> IP address
+	Networks     map[string]string   // network name -> IP address
+	Aliases      map[string][]string // network name -> DNS aliases
 }
 
 // ContainerHealth holds the container's health status if a HEALTHCHECK is configured.

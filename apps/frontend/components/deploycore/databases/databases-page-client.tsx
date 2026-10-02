@@ -1,75 +1,69 @@
 'use client'
 
-import { useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { PageContainer } from '@/components/platform/page-container'
 import { PageHeader } from '@/components/platform/page-header'
 import { LoadingState } from '@/components/platform/loading-state'
 import { ErrorState } from '@/components/platform/error-state'
 import { CreateDatabaseDialog } from './create-database-dialog'
 import { DatabasesFilterTable } from './databases-filter-table'
-import { useApiQuery } from '@/hooks/use-api-query'
-import { apiClient, type Database, type WireProject, type Server, type WireEnvironment } from '@/lib/api'
+import { apiClient } from '@/lib/api'
+import { useOrganization } from '@/lib/auth-context'
+import { loadProductionDatabaseList } from '@/lib/control-plane/database-read'
 import type { DatabaseInstance } from '@/lib/types'
 
 export function DatabasesPageClient() {
-  const fetchDatabases = useCallback(async () => {
-    const [dbRes, projRes, envRes, serverRes] = await Promise.all([
-      apiClient.get<{ databases: Database[] }>('/databases'),
-      apiClient.get<{ items: WireProject[] }>('/projects'),
-      apiClient.get<{ items: WireEnvironment[] }>('/environments'),
-      apiClient.get<{ items: Server[] }>('/servers'),
-    ])
+  const { activeOrg } = useOrganization()
+  const [databases, setDatabases] = useState<DatabaseInstance[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
 
-    const projMap = new Map(projRes.items?.map(p => [p.id, p]) || [])
-    const envMap = new Map(envRes.items?.map(e => [e.id, e]) || [])
-    const serverMap = new Map(serverRes.items?.map(s => [s.id, s]) || [])
-
-    return dbRes.databases.map(db => {
-      const proj = projMap.get(db.projectId || '')
-      const env = envMap.get(db.environmentId || '')
-      const server = serverMap.get(db.serverId || '')
-
-      return {
-        id: db.id || '',
-        name: db.name || 'Unnamed',
-        type: 'PostgreSQL',
-        version: db.engineVersion || '15',
-        project: proj?.name || 'Unknown',
-        environment: env?.name || 'Unknown',
-        server: server?.name || 'Unknown',
-        storageUsedGb: 0,
-        storageTotalGb: 10,
-        backups: 0,
-        lastBackup: 'Never',
-        status: db.status?.toLowerCase() === 'running' ? 'healthy' : 'pending',
-        dbName: db.databaseName || '',
-        port: 5432,
-        username: db.username || '',
-        connectionHost: server?.hostname || '',
-        credentialsRevealAllowed: db.hasCredential || false,
-      } as DatabaseInstance
+  useEffect(() => {
+    if (!activeOrg?.id) return
+    let cancelled = false
+    void loadProductionDatabaseList(apiClient, activeOrg.id).then((result) => {
+      if (cancelled) return
+      if (result.kind === 'ok') {
+        setDatabases(result.value)
+        setError(null)
+        return
+      }
+      setDatabases(null)
+      setError(result.kind === 'error' ? result.message : 'Databases were not found.')
     })
-  }, [])
+    return () => {
+      cancelled = true
+    }
+  }, [activeOrg?.id, attempt])
 
-  const { data: databases, isLoading, error, reload } = useApiQuery(fetchDatabases)
+  function reload() {
+    setDatabases(null)
+    setError(null)
+    setAttempt((value) => value + 1)
+  }
 
-  if (isLoading) return <LoadingState label="Loading databases..." />
-  if (error) return <ErrorState title="Failed to load databases" message={error} onRetry={reload} />
-
-  function handleCreated() {
-    reload()
+  if (!activeOrg?.id) {
+    return (
+      <PageContainer density="wide">
+        <ErrorState title="Could not load databases" message="Select an organization to load databases." />
+      </PageContainer>
+    )
   }
 
   return (
     <PageContainer density="wide">
       <PageHeader
         title="Databases"
-        description="Managed database instances across all projects. PostgreSQL is the default engine with automated storage volume provisioning and scheduled backup policies."
+        description="Managed PostgreSQL instances. Each database is provisioned on a selected environment and server."
+        actions={<CreateDatabaseDialog onCreated={reload} />}
       />
-      <DatabasesFilterTable
-        databases={databases || []}
-        headerAction={<CreateDatabaseDialog onCreated={handleCreated} />}
-      />
+      {error ? (
+        <ErrorState title="Could not load databases" message={error} onRetry={reload} />
+      ) : !databases ? (
+        <LoadingState variant="table" rows={6} label="Loading databases…" />
+      ) : (
+        <DatabasesFilterTable databases={databases} />
+      )}
     </PageContainer>
   )
 }

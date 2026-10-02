@@ -182,6 +182,8 @@ export interface DatabaseInstance {
   port: number
   username: string
   connectionHost: string
+  /** Volume name from the control plane. Usage bytes are not on the database list. */
+  storageVolumeName?: string
   /**
    * API policy flag: when false, the UI must never reveal connection credentials
    * even if the operator claims permission.

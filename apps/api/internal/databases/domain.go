@@ -28,6 +28,7 @@ type Database struct {
 	EnvironmentID      uuid.UUID
 	ServerID           uuid.UUID
 	Name               string
+	DNSAlias           string
 	Engine             string
 	EngineVersion      string
 	DatabaseName       string
@@ -52,6 +53,16 @@ type BackupPolicy struct {
 	Enabled       bool   `json:"enabled"`
 	Schedule      string `json:"schedule,omitempty"`
 	RetentionDays int    `json:"retentionDays,omitempty"`
+}
+
+// EnvironmentScope is the project and environment identity used to join the
+// shared private Docker network.
+type EnvironmentScope struct {
+	OrganizationID  uuid.UUID
+	ProjectID       uuid.UUID
+	ProjectSlug     string
+	EnvironmentID   uuid.UUID
+	EnvironmentSlug string
 }
 
 type CreateInput struct {

@@ -1,7 +1,8 @@
 'use client'
 
-import { useId, useState } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import { useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Database, Plus } from 'lucide-react'
 import { toast } from 'sonner'
@@ -18,89 +19,134 @@ import {
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import {
-  DATABASE_ENGINES,
+  environmentOptionLabel,
+  selectItems,
+  serverOptionLabel,
+  type PlacementEnvironmentOption,
+  type PlacementServerOption,
+} from '@/components/deploycore/applications/wizard/placement-options'
+import { apiClient, ApiError, type Page, type Server, type WireEnvironment, type WireProject } from '@/lib/api'
+import { useOrganization } from '@/lib/auth-context'
+import { createProductionDatabase, projectEnvironmentsPath, projectListPath, serverListPath } from '@/lib/control-plane/database-read'
+import {
+  DEFAULT_PROVISION_DATABASE_VALUES,
   POSTGRES_VERSIONS,
-  createDatabaseSchema,
-  DEFAULT_CREATE_DATABASE_VALUES,
-  type CreateDatabaseFormValues,
+  provisionDatabaseSchema,
+  type ProvisionDatabaseFormValues,
 } from '@/lib/validations/database'
-import { projects as rawProjects, servers as rawServers } from '@/lib/mock-data'
-import { getDemoFixtures } from '@/lib/mock-isolation'
-
-const projects = getDemoFixtures(rawProjects)
-const servers = getDemoFixtures(rawServers)
-import type { DatabaseInstance } from '@/lib/types'
 
 interface CreateDatabaseDialogProps {
-  onCreated?: (database: DatabaseInstance) => void
+  onCreated?: () => void
 }
 
 export function CreateDatabaseDialog({ onCreated }: CreateDatabaseDialogProps) {
+  const router = useRouter()
+  const { activeOrg } = useOrganization()
   const [open, setOpen] = useState(false)
+  const [projects, setProjects] = useState<WireProject[]>([])
+  const [environments, setEnvironments] = useState<PlacementEnvironmentOption[]>([])
+  const [servers, setServers] = useState<PlacementServerOption[]>([])
+  const [loadingPlacement, setLoadingPlacement] = useState(false)
+  const [serverError, setServerError] = useState<string | null>(null)
+  const [projectId, setProjectId] = useState('')
 
-  const nameInputId = useId()
-  const engineSelectId = useId()
-  const versionSelectId = useId()
-  const projectSelectId = useId()
-  const envSelectId = useId()
-  const serverSelectId = useId()
-  const dbNameInputId = useId()
-  const usernameInputId = useId()
-  const storageInputId = useId()
-  const credPolicySwitchId = useId()
-
+  const form = useForm<ProvisionDatabaseFormValues>({
+    resolver: zodResolver(provisionDatabaseSchema),
+    defaultValues: DEFAULT_PROVISION_DATABASE_VALUES,
+  })
   const {
     register,
     handleSubmit,
+    control,
     setValue,
     reset,
-    control,
     formState: { errors, isSubmitting },
-  } = useForm<CreateDatabaseFormValues>({
-    resolver: zodResolver(createDatabaseSchema),
-    defaultValues: {
-      ...DEFAULT_CREATE_DATABASE_VALUES,
-      project: projects[0]?.name ?? 'Daya Platform',
-    },
-  })
+  } = form
 
-  const selectedEngine = useWatch({ control, name: 'type', defaultValue: 'PostgreSQL' })
-  const selectedVersion = useWatch({ control, name: 'version', defaultValue: '16' })
-  const selectedProject = useWatch({ control, name: 'project', defaultValue: projects[0]?.name ?? '' })
-  const selectedEnvironment = useWatch({ control, name: 'environment', defaultValue: 'Production' })
-  const selectedServer = useWatch({ control, name: 'server', defaultValue: servers[0]?.name ?? '' })
-  const credReveal = useWatch({ control, name: 'credentialsRevealAllowed', defaultValue: true })
+  function loadPlacement(organizationId: string) {
+    setLoadingPlacement(true)
+    void Promise.all([
+      apiClient.get<Page<WireProject>>(projectListPath(organizationId)).catch(() => null),
+      apiClient.get<Page<Server>>(serverListPath(organizationId)).catch(() => null),
+    ]).then(([projectPage, serverPage]) => {
+      setProjects(Array.isArray(projectPage?.items) ? projectPage.items : [])
+      setServers(
+        (serverPage?.items ?? [])
+          .filter((server) => server.id && server.status !== 'OFFLINE')
+          .map((server) => ({
+            id: server.id || '',
+            name: server.name || server.id || '',
+            region: server.region || server.provider,
+            status: server.status,
+          })),
+      )
+      setLoadingPlacement(false)
+    })
+  }
 
-  async function onSubmit(data: CreateDatabaseFormValues) {
+  function loadEnvironments(nextProjectId: string) {
+    void apiClient
+      .get<Page<WireEnvironment>>(projectEnvironmentsPath(nextProjectId))
+      .then((page) => {
+        setEnvironments(
+          (page.items ?? [])
+            .filter((environment) => environment.id)
+            .map((environment) => ({
+              id: environment.id || '',
+              name: environment.name || environment.id || '',
+              kind: environment.kind,
+            })),
+        )
+      })
+      .catch(() => {
+        setEnvironments([])
+      })
+  }
+
+  const projectItems = useMemo(
+    () => selectItems(projects.flatMap((project) => (project.id ? [{ id: project.id, name: project.name || project.id }] : [])), (project) => project.name),
+    [projects],
+  )
+  const environmentItems = useMemo(
+    () => selectItems(environments, environmentOptionLabel),
+    [environments],
+  )
+  const serverItems = useMemo(() => selectItems(servers, serverOptionLabel), [servers])
+
+  async function onSubmit(data: ProvisionDatabaseFormValues) {
+    if (!activeOrg?.id) {
+      setServerError('Select an organization before provisioning a database.')
+      return
+    }
+    setServerError(null)
     try {
-      const newInstance: DatabaseInstance = {
-        id: `db-${data.name}`,
+      const created = await createProductionDatabase(apiClient, {
+        organizationId: activeOrg.id,
+        projectId: data.projectId,
+        environmentId: data.environmentId,
+        serverId: data.serverId,
         name: data.name,
-        type: data.type,
-        version: data.version,
-        project: data.project,
-        environment: data.environment,
-        server: data.server,
-        storageUsedGb: 1,
-        storageTotalGb: data.storageTotalGb,
-        backups: 0,
-        lastBackup: 'Never',
-        status: 'healthy',
-        dbName: data.dbName,
-        port: data.type === 'PostgreSQL' ? 5432 : data.type === 'MySQL' ? 3306 : data.type === 'Redis' ? 6379 : 27017,
+        engineVersion: data.engineVersion,
+        databaseName: data.databaseName,
         username: data.username,
-        connectionHost: `${data.name}.${data.project.toLowerCase().replace(/\s+/g, '-')}.internal`,
-        credentialsRevealAllowed: data.credentialsRevealAllowed,
+        storageVolume: data.storageVolume,
+      })
+      if (!created.id) {
+        setServerError('The control plane did not return a database id.')
+        return
       }
-
-      onCreated?.(newInstance)
-      toast.success(`${newInstance.name} provisioned successfully (${newInstance.type} ${newInstance.version})`)
+      toast.success(`Database “${data.name}” is provisioning`)
+      onCreated?.()
       setOpen(false)
-      reset()
-    } catch {
-      toast.error('Failed to provision database')
+      reset(DEFAULT_PROVISION_DATABASE_VALUES)
+      setProjectId('')
+      setEnvironments([])
+      router.push(`/databases/${created.id}`)
+    } catch (err) {
+      const message = err instanceof ApiError || err instanceof Error ? err.message : 'Failed to provision database'
+      setServerError(message)
+      toast.error(message)
     }
   }
 
@@ -109,7 +155,14 @@ export function CreateDatabaseDialog({ onCreated }: CreateDatabaseDialogProps) {
       open={open}
       onOpenChange={(next) => {
         setOpen(next)
-        if (!next) reset()
+        if (!next) {
+          reset(DEFAULT_PROVISION_DATABASE_VALUES)
+          setServerError(null)
+          setEnvironments([])
+          setProjectId('')
+          return
+        }
+        if (activeOrg?.id) loadPlacement(activeOrg.id)
       }}
     >
       <DialogTrigger
@@ -124,191 +177,162 @@ export function CreateDatabaseDialog({ onCreated }: CreateDatabaseDialogProps) {
         <DialogHeader>
           <DialogTitle>Provision managed database</DialogTitle>
           <DialogDescription>
-            Deploy a containerized, managed database engine with automated storage volumes and backup scheduling. PostgreSQL is the default engine.
+            Creates a PostgreSQL database on the selected environment and server. The control plane generates the password. It is not shown here.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <FieldGroup>
             <Field data-invalid={Boolean(errors.name)}>
-              <FieldLabel htmlFor={nameInputId}>Instance name</FieldLabel>
-              <Input
-                id={nameInputId}
-                placeholder="analytics-db"
-                aria-invalid={Boolean(errors.name)}
-                {...register('name')}
-              />
-              <FieldDescription>Lowercase alphanumeric identifier with hyphens.</FieldDescription>
+              <FieldLabel htmlFor="db-name">Instance name</FieldLabel>
+              <Input id="db-name" placeholder="modulyn" aria-invalid={Boolean(errors.name)} {...register('name')} />
               {errors.name ? <FieldError>{errors.name.message}</FieldError> : null}
             </Field>
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field>
-                <FieldLabel htmlFor={engineSelectId}>Engine</FieldLabel>
-                <Select
-                  value={selectedEngine}
-                  onValueChange={(val) => {
-                    if (val) setValue('type', val as typeof selectedEngine)
-                  }}
-                >
-                  <SelectTrigger id={engineSelectId} className="w-full">
-                    <SelectValue placeholder="Select engine" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DATABASE_ENGINES.map((engine) => (
-                      <SelectItem key={engine} value={engine}>
-                        {engine}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor={versionSelectId}>Engine version</FieldLabel>
-                <Select
-                  value={selectedVersion}
-                  onValueChange={(val) => {
-                    if (val) setValue('version', val)
-                  }}
-                >
-                  <SelectTrigger id={versionSelectId} className="w-full">
-                    <SelectValue placeholder="Version" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {POSTGRES_VERSIONS.map((ver) => (
-                      <SelectItem key={ver} value={ver}>
-                        PostgreSQL {ver}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field>
-                <FieldLabel htmlFor={projectSelectId}>Project</FieldLabel>
-                <Select
-                  value={selectedProject}
-                  onValueChange={(val) => {
-                    if (val) setValue('project', val)
-                  }}
-                >
-                  <SelectTrigger id={projectSelectId} className="w-full">
-                    <SelectValue placeholder="Project" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {projects.map((p) => (
-                      <SelectItem key={p.id} value={p.name}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor={envSelectId}>Environment</FieldLabel>
-                <Select
-                  value={selectedEnvironment}
-                  onValueChange={(val) => {
-                    if (val) setValue('environment', val)
-                  }}
-                >
-                  <SelectTrigger id={envSelectId} className="w-full">
-                    <SelectValue placeholder="Environment" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Production">Production</SelectItem>
-                    <SelectItem value="Staging">Staging</SelectItem>
-                    <SelectItem value="Development">Development</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-
             <Field>
-              <FieldLabel htmlFor={serverSelectId}>Target server placement</FieldLabel>
-              <Select
-                value={selectedServer}
-                onValueChange={(val) => {
-                  if (val) setValue('server', val)
-                }}
-              >
-                <SelectTrigger id={serverSelectId} className="w-full">
-                  <SelectValue placeholder="Select server" />
-                </SelectTrigger>
-                <SelectContent>
-                  {servers.map((s) => (
-                    <SelectItem key={s.id} value={s.name}>
-                      {s.name} ({s.region}) · {s.status}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <FieldLabel htmlFor="db-version">PostgreSQL version</FieldLabel>
+              <Controller
+                name="engineVersion"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    items={Object.fromEntries(POSTGRES_VERSIONS.map((version) => [version, `PostgreSQL ${version}`]))}
+                    value={field.value || null}
+                    onValueChange={(value) => field.onChange(value ?? '')}
+                  >
+                    <SelectTrigger id="db-version" className="w-full">
+                      <SelectValue placeholder="Version" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {POSTGRES_VERSIONS.map((version) => (
+                        <SelectItem key={version} value={version} label={`PostgreSQL ${version}`}>
+                          PostgreSQL {version}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </Field>
+
+            <Field data-invalid={Boolean(errors.projectId)}>
+              <FieldLabel htmlFor="db-project">Project</FieldLabel>
+              <Controller
+                name="projectId"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    items={projectItems}
+                    value={field.value || null}
+                    onValueChange={(value) => {
+                      const next = value ?? ''
+                      field.onChange(next)
+                      setProjectId(next)
+                      setValue('environmentId', '')
+                      setEnvironments([])
+                      if (next) loadEnvironments(next)
+                    }}
+                  >
+                    <SelectTrigger id="db-project" className="w-full">
+                      <SelectValue placeholder={loadingPlacement ? 'Loading projects…' : 'Select a project'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {projects.map((project) =>
+                        project.id ? (
+                          <SelectItem key={project.id} value={project.id} label={project.name || project.id}>
+                            {project.name || project.id}
+                          </SelectItem>
+                        ) : null,
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {errors.projectId ? <FieldError>{errors.projectId.message}</FieldError> : null}
+            </Field>
+
+            <Field data-invalid={Boolean(errors.environmentId)}>
+              <FieldLabel htmlFor="db-environment">Environment</FieldLabel>
+              <Controller
+                name="environmentId"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    items={environmentItems}
+                    value={field.value || null}
+                    onValueChange={(value) => field.onChange(value ?? '')}
+                  >
+                    <SelectTrigger id="db-environment" className="w-full">
+                      <SelectValue placeholder={projectId ? 'Select an environment' : 'Select a project first'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {environments.map((environment) => (
+                        <SelectItem key={environment.id} value={environment.id} label={environmentOptionLabel(environment)}>
+                          {environmentOptionLabel(environment)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {errors.environmentId ? <FieldError>{errors.environmentId.message}</FieldError> : null}
+            </Field>
+
+            <Field data-invalid={Boolean(errors.serverId)}>
+              <FieldLabel htmlFor="db-server">Server</FieldLabel>
+              <Controller
+                name="serverId"
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    items={serverItems}
+                    value={field.value || null}
+                    onValueChange={(value) => field.onChange(value ?? '')}
+                  >
+                    <SelectTrigger id="db-server" className="w-full">
+                      <SelectValue placeholder={loadingPlacement ? 'Loading servers…' : 'Select a server'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {servers.map((server) => (
+                        <SelectItem key={server.id} value={server.id} label={serverOptionLabel(server)}>
+                          {serverOptionLabel(server)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {errors.serverId ? <FieldError>{errors.serverId.message}</FieldError> : null}
             </Field>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field data-invalid={Boolean(errors.dbName)}>
-                <FieldLabel htmlFor={dbNameInputId}>Database name</FieldLabel>
-                <Input
-                  id={dbNameInputId}
-                  placeholder="analytics"
-                  aria-invalid={Boolean(errors.dbName)}
-                  {...register('dbName')}
-                />
-                {errors.dbName ? <FieldError>{errors.dbName.message}</FieldError> : null}
+              <Field data-invalid={Boolean(errors.databaseName)}>
+                <FieldLabel htmlFor="db-logical-name">Database name</FieldLabel>
+                <Input id="db-logical-name" placeholder="app" aria-invalid={Boolean(errors.databaseName)} {...register('databaseName')} />
+                {errors.databaseName ? <FieldError>{errors.databaseName.message}</FieldError> : null}
               </Field>
-
               <Field data-invalid={Boolean(errors.username)}>
-                <FieldLabel htmlFor={usernameInputId}>Initial username</FieldLabel>
-                <Input
-                  id={usernameInputId}
-                  placeholder="postgres"
-                  aria-invalid={Boolean(errors.username)}
-                  {...register('username')}
-                />
+                <FieldLabel htmlFor="db-username">Username</FieldLabel>
+                <Input id="db-username" placeholder="deploycore" aria-invalid={Boolean(errors.username)} {...register('username')} />
                 {errors.username ? <FieldError>{errors.username.message}</FieldError> : null}
               </Field>
             </div>
 
-            <Field data-invalid={Boolean(errors.storageTotalGb)}>
-              <FieldLabel htmlFor={storageInputId}>Storage volume (GB)</FieldLabel>
-              <Input
-                id={storageInputId}
-                type="number"
-                min={5}
-                max={10000}
-                aria-invalid={Boolean(errors.storageTotalGb)}
-                {...register('storageTotalGb', { valueAsNumber: true })}
-              />
-              <FieldDescription>Initial persistent disk allocation attached to container.</FieldDescription>
-              {errors.storageTotalGb ? <FieldError>{errors.storageTotalGb.message}</FieldError> : null}
-            </Field>
-
-            <Field className="flex flex-row items-center justify-between gap-3 rounded-lg border border-border p-3">
-              <div className="flex flex-col gap-0.5">
-                <FieldLabel htmlFor={credPolicySwitchId} className="cursor-pointer">Credential reveal policy</FieldLabel>
-                <FieldDescription>
-                  When enabled, operators with proper permissions can reveal the live connection password.
-                </FieldDescription>
-              </div>
-              <Switch
-                id={credPolicySwitchId}
-                checked={credReveal}
-                onCheckedChange={(checked) => setValue('credentialsRevealAllowed', checked)}
-              />
+            <Field>
+              <FieldLabel htmlFor="db-volume">Storage volume name</FieldLabel>
+              <Input id="db-volume" placeholder="Leave empty to let the control plane name it" {...register('storageVolume')} />
+              <FieldDescription>Optional. Empty uses the control plane default volume name.</FieldDescription>
             </Field>
           </FieldGroup>
 
+          {serverError ? (
+            <p className="text-sm text-critical" role="alert">
+              {serverError}
+            </p>
+          ) : null}
+
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-              disabled={isSubmitting}
-            >
+            <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button type="submit" disabled={isSubmitting}>

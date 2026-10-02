@@ -24,12 +24,26 @@ func TestDispatchRegistry_ContainsDatabaseOps(t *testing.T) {
 
 func TestDatabaseHandlers_NilClientFailsGracefully(t *testing.T) {
 	provH := provisionDatabaseHandler(nil, nil, nil)
-	_, err := provH.Execute(context.Background(), map[string]any{"databaseId": "db-1"})
+	_, err := provH.Execute(context.Background(), map[string]any{
+		"databaseId":      "db-1",
+		"networkName":     "dc-modulyn-production-private",
+		"dnsAlias":        "db-modulyn",
+		"projectId":       "proj-1",
+		"projectSlug":     "modulyn",
+		"environmentId":   "env-1",
+		"environmentSlug": "production",
+		"organizationId":  "org-1",
+	})
 	if err == nil {
 		t.Errorf("expected error with nil docker client, got nil")
 	}
 	if execErr, ok := err.(*ExecutionError); !ok || execErr.Code != ErrCodeDockerError {
 		t.Errorf("expected ErrCodeDockerError, got %v", err)
+	}
+
+	_, err = provH.Execute(context.Background(), map[string]any{"databaseId": "db-1", "networkName": "bridge"})
+	if execErr, ok := err.(*ExecutionError); !ok || execErr.Code != ErrCodeInvalidPayload {
+		t.Errorf("expected ErrCodeInvalidPayload for missing private network identity, got %v", err)
 	}
 
 	startH := startDatabaseHandler(nil, nil)

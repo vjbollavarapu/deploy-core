@@ -7,9 +7,10 @@ import { DatabaseSubnav } from '@/components/platform/database-subnav'
 import { PageContainer } from '@/components/platform/page-container'
 import { ResourceHeader } from '@/components/platform/resource-header'
 import { StatusBadge } from '@/components/platform/status-badge'
+import { ProductionDatabaseShell } from '@/components/deploycore/databases/production-database-shell'
 import { findDatabase } from '@/lib/databases'
 import { databases as rawDatabases } from '@/lib/mock-data'
-import { getDemoFixtures } from '@/lib/mock-isolation'
+import { getDemoFixtures, isDemoModeEnabled } from '@/lib/mock-isolation'
 
 const databases = getDemoFixtures(rawDatabases)
 
@@ -21,6 +22,13 @@ export default async function DatabaseLayout({
   params: Promise<{ databaseId: string }>
 }) {
   const { databaseId } = await params
+  if (!isDemoModeEnabled()) {
+    return (
+      <ProductionDatabaseShell key={databaseId} databaseId={databaseId}>
+        {children}
+      </ProductionDatabaseShell>
+    )
+  }
   const database = findDatabase(databaseId, databases)
   if (!database) notFound()
 

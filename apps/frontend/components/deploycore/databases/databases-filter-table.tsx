@@ -151,17 +151,25 @@ export function DatabasesFilterTable({ databases, headerAction }: DatabasesFilte
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{db.server}</TableCell>
                   <TableCell>
-                    <ResourceUsageBar
-                      label=""
-                      value={Math.round((db.storageUsedGb / db.storageTotalGb) * 100)}
-                      detail={`${db.storageUsedGb} / ${db.storageTotalGb} GB`}
-                      size="sm"
-                      className="w-40"
-                    />
+                    {db.storageTotalGb > 0 ? (
+                      <ResourceUsageBar
+                        label=""
+                        value={Math.round((db.storageUsedGb / db.storageTotalGb) * 100)}
+                        detail={`${db.storageUsedGb} / ${db.storageTotalGb} GB`}
+                        size="sm"
+                        className="w-40"
+                      />
+                    ) : (
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {db.storageVolumeName || '—'}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-col gap-0.5 text-sm">
-                      <span className="text-foreground">{db.backups} backups</span>
+                      <span className="text-foreground">
+                        {db.backups === 0 && db.lastBackup === '—' ? '—' : `${db.backups} backups`}
+                      </span>
                       <span className="text-xs text-muted-foreground">Last: {db.lastBackup}</span>
                     </div>
                   </TableCell>

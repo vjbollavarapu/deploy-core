@@ -6,6 +6,7 @@ import { DatabaseConnectionPanel } from '@/components/deploycore/databases/datab
 import { DatabaseMetricsChart } from '@/components/deploycore/databases/database-metrics-chart'
 import { DatabaseRestorePanel } from '@/components/deploycore/databases/database-restore-panel'
 import { DatabaseSettingsPanel } from '@/components/deploycore/databases/database-overview'
+import { ProductionDatabaseSection } from '@/components/deploycore/databases/production-database-section'
 import {
   DATABASE_SECTIONS,
   databaseMetricSeries,
@@ -14,7 +15,7 @@ import {
   type DatabaseSectionId,
 } from '@/lib/databases'
 import { databases as rawDatabases } from '@/lib/mock-data'
-import { getDemoFixtures } from '@/lib/mock-isolation'
+import { getDemoFixtures, isDemoModeEnabled } from '@/lib/mock-isolation'
 
 const databases = getDemoFixtures(rawDatabases)
 
@@ -26,6 +27,10 @@ export default async function DatabaseSectionPage({
   params: Promise<{ databaseId: string; section: string }>
 }) {
   const { databaseId, section } = await params
+  if (!isDemoModeEnabled()) {
+    if (!SECTION_IDS.has(section as DatabaseSectionId) || section === 'overview') notFound()
+    return <ProductionDatabaseSection section={section} />
+  }
   const database = findDatabase(databaseId, databases)
   if (!database) notFound()
   if (!SECTION_IDS.has(section as DatabaseSectionId) || section === 'overview') notFound()

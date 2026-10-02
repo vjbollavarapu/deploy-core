@@ -37,6 +37,42 @@ export const createDatabaseSchema = z.object({
 
 export type CreateDatabaseFormValues = z.infer<typeof createDatabaseSchema>
 
+export const provisionDatabaseSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(63, 'Name must be 63 characters or fewer'),
+  engineVersion: z.string().trim().min(1, 'Engine version is required'),
+  projectId: z.string().trim().min(1, 'Select a project'),
+  environmentId: z.string().trim().min(1, 'Select an environment'),
+  serverId: z.string().trim().min(1, 'Select a server'),
+  databaseName: z
+    .string()
+    .trim()
+    .regex(
+      /^[a-zA-Z][a-zA-Z0-9_]{0,62}$/,
+      'Database name must start with a letter and use letters, numbers, or underscores',
+    ),
+  username: z
+    .string()
+    .trim()
+    .regex(
+      /^[a-zA-Z][a-zA-Z0-9_]{0,62}$/,
+      'Username must start with a letter and use letters, numbers, or underscores',
+    ),
+  storageVolume: z.string().trim(),
+})
+
+export type ProvisionDatabaseFormValues = z.infer<typeof provisionDatabaseSchema>
+
+export const DEFAULT_PROVISION_DATABASE_VALUES: ProvisionDatabaseFormValues = {
+  name: '',
+  engineVersion: '16',
+  projectId: '',
+  environmentId: '',
+  serverId: '',
+  databaseName: '',
+  username: 'deploycore',
+  storageVolume: '',
+}
+
 export const DEFAULT_CREATE_DATABASE_VALUES: CreateDatabaseFormValues = {
   name: '',
   type: 'PostgreSQL',

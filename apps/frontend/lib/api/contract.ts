@@ -324,6 +324,8 @@ export interface Database {
   provisionCommandId?: string | null
   lastError?: string
   hasCredential?: boolean
+  privateHost?: string
+  port?: number
   createdBy?: UUID
   createdAt?: Timestamp
   updatedAt?: Timestamp

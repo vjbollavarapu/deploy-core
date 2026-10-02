@@ -79,7 +79,8 @@ export function DatabaseConnectionPanel({ database }: DatabaseConnectionPanelPro
   }
 
   const activePassword = revealed && revealedPassword ? revealedPassword : '••••••••••••'
-  const url = buildConnectionUrl(database, activePassword)
+  const hostKnown = Boolean(database.connectionHost && database.connectionHost !== '—')
+  const url = hostKnown ? buildConnectionUrl(database, activePassword) : '—'
 
   return (
     <div className="flex flex-col gap-4">
@@ -110,8 +111,8 @@ export function DatabaseConnectionPanel({ database }: DatabaseConnectionPanelPro
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <MetaRow label="Engine" value={`${database.type} ${database.version}`} />
-          <MetaRow label="Host" value={database.connectionHost} copyable />
-          <MetaRow label="Port" value={String(database.port)} copyable />
+          <MetaRow label="Host" value={hostKnown ? database.connectionHost : '—'} copyable={hostKnown} />
+          <MetaRow label="Port" value={hostKnown ? String(database.port) : '—'} copyable={hostKnown} />
           <MetaRow label="Database name" value={database.dbName} copyable />
           <MetaRow label="Username" value={database.username} copyable />
 

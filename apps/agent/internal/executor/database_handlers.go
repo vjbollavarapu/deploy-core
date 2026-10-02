@@ -8,6 +8,7 @@ import (
 
 	"github.com/deploycore/deploy-core/apps/agent/internal/database"
 	"github.com/deploycore/deploy-core/apps/agent/internal/docker"
+	"github.com/deploycore/deploy-core/apps/agent/internal/network"
 	"github.com/deploycore/deploy-core/apps/agent/internal/transport"
 )
 
@@ -21,16 +22,18 @@ func provisionDatabaseHandler(cli *docker.Client, tr transport.Client, log *slog
 		log = slog.Default()
 	}
 	return HandlerFunc(func(ctx context.Context, payload map[string]any) (ExecutionResult, error) {
-		if cli == nil {
-			return ExecutionResult{}, Errorf(ErrCodeDockerError, "docker client unavailable")
-		}
-
 		var req database.ProvisionRequest
 		if err := decodePayload(payload, &req); err != nil {
 			return ExecutionResult{}, err
 		}
-		if strings.TrimSpace(req.DatabaseID) == "" {
-			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "databaseId is required")
+		if err := validateDatabaseNetworkIdentity(req); err != nil {
+			return ExecutionResult{}, Errorf(ErrCodeInvalidPayload, "%v", err)
+		}
+		if cli == nil {
+			return ExecutionResult{}, Errorf(ErrCodeDockerError, "docker client unavailable")
+		}
+		if err := establishDatabaseNetwork(ctx, network.NewManager(cli), req); err != nil {
+			return ExecutionResult{}, Errorf(ErrCodeDockerError, "%v", err)
 		}
 
 		// Password is never embedded by the Control Plane — fetch via bootstrap.

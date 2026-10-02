@@ -103,6 +103,18 @@ func (m *mockDatabaseDockerClient) InspectNetwork(ctx context.Context, name stri
 	return n, nil
 }
 
+func (m *mockDatabaseDockerClient) RemoveContainer(ctx context.Context, id string, force bool) error {
+	detail, ok := m.containers[id]
+	if !ok {
+		return fmt.Errorf("container %s not found", id)
+	}
+	delete(m.containers, id)
+	if detail.Name != "" {
+		delete(m.containers, detail.Name)
+	}
+	return nil
+}
+
 func (m *mockDatabaseDockerClient) CreateNetwork(ctx context.Context, req docker.CreateNetworkRequest) (string, error) {
 	m.networks[req.Name] = docker.NetworkDetail{ID: "net-" + req.Name, Name: req.Name}
 	return "net-" + req.Name, nil
@@ -133,7 +145,8 @@ func TestManager_Provision(t *testing.T) {
 		Username:          "deployuser",
 		Password:          "secret_pwd_99",
 		StorageVolumeName: "dc-vol-db-app-prod",
-		NetworkName:       "dc-net-proj-env",
+		NetworkName:       "dc-modulyn-production-private",
+		DNSAlias:          "db-modulyn",
 		CPUMillis:         1000,
 		MemoryBytes:       1024 * 1024 * 1024,
 		VolumeProtected:   true,
@@ -189,6 +202,21 @@ func TestManager_Provision(t *testing.T) {
 		t.Errorf("expected container to have deploycore.protected='true'")
 	}
 
+	if len(cReq.Networks) != 1 || cReq.Networks[0] != "dc-modulyn-production-private" {
+		t.Fatalf("networks = %#v", cReq.Networks)
+	}
+	if alias := cReq.NetworkAliases["dc-modulyn-production-private"]; len(alias) != 1 || alias[0] != "db-modulyn" {
+		t.Fatalf("aliases = %#v", cReq.NetworkAliases)
+	}
+	if len(cReq.InternalPorts) != 0 {
+		t.Fatalf("host ports published: %#v", cReq.InternalPorts)
+	}
+	for _, networkName := range cReq.Networks {
+		if networkName == protocol.ProxyNetworkName {
+			t.Fatal("database joined deploycore-proxy")
+		}
+	}
+
 	// Empty policy resolves to the same baseline as application containers.
 	if cReq.Policy == nil || len(cReq.Policy.AddCapabilities) != 0 {
 		t.Fatalf("database create must not carry a custom capability list: %+v", cReq.Policy)
@@ -205,6 +233,107 @@ func TestManager_Provision(t *testing.T) {
 		if add[i] != cap {
 			t.Fatalf("CapAdd = %v", add)
 		}
+	}
+}
+
+func TestManager_ProvisionRejectsDefaultBridge(t *testing.T) {
+	cli := newMockDocker()
+	mgr := NewManager(cli, nil)
+	_, err := mgr.Provision(context.Background(), ProvisionRequest{
+		DatabaseID:        "db-1",
+		EngineVersion:     "16",
+		DatabaseName:      "app",
+		Username:          "appuser",
+		Password:          "secret_pwd_99",
+		StorageVolumeName: "db-app-data",
+		NetworkName:       "bridge",
+		DNSAlias:          "db-app",
+	})
+	if err == nil {
+		t.Fatal("expected default bridge attachment to fail")
+	}
+	if cli.createdContainerReq != nil {
+		t.Fatal("container was created without the private network")
+	}
+}
+
+func TestManager_ExistingContainerRecreatedOntoPrivateNetwork(t *testing.T) {
+	cli := newMockDocker()
+	mgr := NewManager(cli, nil)
+	const (
+		databaseID = "db-uuid-1234"
+		volume     = "dc-vol-db-app-prod"
+		network    = "dc-modulyn-production-private"
+		alias      = "db-modulyn"
+	)
+	containerName := FormatContainerName(databaseID)
+	cli.volumes[volume] = docker.VolumeDetail{
+		Name: volume,
+		Labels: map[string]string{
+			protocol.LabelManaged:     "true",
+			protocol.LabelProtected:   "true",
+			"deploycore.service_type": "database",
+			"deploycore.database_id":  databaseID,
+		},
+	}
+	cli.images["postgres:16-alpine"] = docker.ImageDetail{ID: "img-postgres"}
+	cli.containers[containerName] = docker.ContainerDetail{
+		ID:          "old-container",
+		Name:        containerName,
+		NetworkMode: "bridge",
+		Networks:    map[string]string{"bridge": "172.17.0.2"},
+		State:       docker.ContainerState{Running: true, Status: "running"},
+		Labels: map[string]string{
+			protocol.LabelManaged:     "true",
+			"deploycore.service_type": "database",
+			"deploycore.database_id":  databaseID,
+		},
+	}
+	cli.containers["old-container"] = cli.containers[containerName]
+
+	state, err := mgr.Provision(context.Background(), ProvisionRequest{
+		DatabaseID:        databaseID,
+		EngineVersion:     "16",
+		DatabaseName:      "app_prod",
+		Username:          "deployuser",
+		Password:          "secret_pwd_99",
+		StorageVolumeName: volume,
+		NetworkName:       network,
+		DNSAlias:          alias,
+	})
+	if err != nil {
+		t.Fatalf("Provision failed: %v", err)
+	}
+	if _, ok := cli.volumes[volume]; !ok {
+		t.Fatal("database volume was removed during recreate")
+	}
+	if _, ok := cli.containers["old-container"]; ok {
+		t.Fatal("old bridge-only container was left in place")
+	}
+	req := cli.createdContainerReq
+	if req == nil {
+		t.Fatal("expected a recreated container")
+	}
+	if len(req.Networks) != 1 || req.Networks[0] != network {
+		t.Fatalf("networks = %#v", req.Networks)
+	}
+	if got := req.NetworkAliases[network]; len(got) != 1 || got[0] != alias {
+		t.Fatalf("aliases = %#v", req.NetworkAliases)
+	}
+	if len(req.InternalPorts) != 0 {
+		t.Fatalf("host ports published: %#v", req.InternalPorts)
+	}
+	foundMount := false
+	for _, mount := range req.Volumes {
+		if mount.VolumeName == volume && mount.MountPath == "/var/lib/postgresql/data" {
+			foundMount = true
+		}
+	}
+	if !foundMount {
+		t.Fatal("recreated container did not reuse the database volume")
+	}
+	if state.ContainerID == "old-container" {
+		t.Fatal("reported the bridge-only container as provisioned")
 	}
 }
 

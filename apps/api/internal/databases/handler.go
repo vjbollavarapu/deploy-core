@@ -82,6 +82,8 @@ type databaseResponse struct {
 	ProvisionCommandID *string        `json:"provisionCommandId,omitempty"`
 	LastError          string         `json:"lastError,omitempty"`
 	HasCredential      bool           `json:"hasCredential"`
+	PrivateHost        string         `json:"privateHost"`
+	Port               int            `json:"port"`
 	CreatedBy          *string        `json:"createdBy,omitempty"`
 	CreatedAt          string         `json:"createdAt"`
 	UpdatedAt          string         `json:"updatedAt"`
@@ -331,6 +333,8 @@ func toResponse(d Database) databaseResponse {
 		BackupPolicy:       d.BackupPolicy,
 		LastError:          d.LastError,
 		HasCredential:      d.HasCredential,
+		PrivateHost:        d.DNSAlias,
+		Port:               postgresPort,
 		CreatedAt:          d.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:          d.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
