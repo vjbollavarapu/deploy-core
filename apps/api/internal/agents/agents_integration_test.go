@@ -118,17 +118,23 @@ func TestAgentRegistrationAndHeartbeat(t *testing.T) {
 		t.Fatalf("replay status=%d body=%s", replay.Code, replay.Body.String())
 	}
 
-	// Heartbeat updates server to ONLINE.
+	// Heartbeat updates server to ONLINE and records positive capacity totals.
 	hbBody, _ := json.Marshal(map[string]any{
-		"agentVersion":    "1.0.1",
-		"dockerStatus":    "ok",
-		"cpuPercent":      12.5,
-		"memoryUsedBytes": 1024,
-		"diskUsedBytes":   2048,
-		"load1":           0.2,
-		"containerCount":  3,
-		"uptimeSeconds":   99,
-		"dockerVersion":   "24.0.0",
+		"agentVersion":     "1.0.1",
+		"dockerStatus":     "ok",
+		"cpuPercent":       12.5,
+		"memoryUsedBytes":  1024,
+		"diskUsedBytes":    2048,
+		"load1":            0.2,
+		"containerCount":   3,
+		"uptimeSeconds":    99,
+		"dockerVersion":    "24.0.0",
+		"hostname":         "instance-20260913-0521",
+		"os":               "linux",
+		"architecture":     "aarch64",
+		"cpuCores":         2,
+		"memoryTotalBytes": int64(12512579584),
+		"diskTotalBytes":   int64(48277495808),
 	})
 	hb := doAuthed(t, srv, http.MethodPost, "/api/v1/agents/heartbeat", hbBody, reg.Agent.Credential)
 	if hb.Code != http.StatusOK {
@@ -141,9 +147,18 @@ func TestAgentRegistrationAndHeartbeat(t *testing.T) {
 	}
 	var serverBody struct {
 		Server struct {
-			Status          string  `json:"status"`
-			LastHeartbeatAt *string `json:"lastHeartbeatAt"`
-			DockerVersion   *string `json:"dockerVersion"`
+			Status               string  `json:"status"`
+			Hostname             string  `json:"hostname"`
+			OperatingSystem      string  `json:"operatingSystem"`
+			Architecture         string  `json:"architecture"`
+			LastHeartbeatAt      *string `json:"lastHeartbeatAt"`
+			DockerVersion        *string `json:"dockerVersion"`
+			CPUCores             *int    `json:"cpuCores"`
+			MemoryBytes          *int64  `json:"memoryBytes"`
+			DiskBytes            *int64  `json:"diskBytes"`
+			CPUAllocatedMillis   int     `json:"cpuAllocatedMillis"`
+			MemoryAllocatedBytes int64   `json:"memoryAllocatedBytes"`
+			DiskAllocatedBytes   int64   `json:"diskAllocatedBytes"`
 		} `json:"server"`
 	}
 	decode(t, get, &serverBody)
@@ -155,6 +170,13 @@ func TestAgentRegistrationAndHeartbeat(t *testing.T) {
 	}
 	if serverBody.Server.DockerVersion == nil || *serverBody.Server.DockerVersion != "24.0.0" {
 		t.Fatalf("dockerVersion=%v", serverBody.Server.DockerVersion)
+	}
+	assertCapacity(t, serverBody.Server.CPUCores, serverBody.Server.MemoryBytes, serverBody.Server.DiskBytes, 2, 12512579584, 48277495808)
+	if serverBody.Server.Hostname != "node-1" || serverBody.Server.OperatingSystem != "" || serverBody.Server.Architecture != "" {
+		t.Fatalf("inventory identity changed: hostname=%q os=%q arch=%q", serverBody.Server.Hostname, serverBody.Server.OperatingSystem, serverBody.Server.Architecture)
+	}
+	if serverBody.Server.CPUAllocatedMillis != 0 || serverBody.Server.MemoryAllocatedBytes != 0 || serverBody.Server.DiskAllocatedBytes != 0 {
+		t.Fatalf("allocated counters changed: cpu=%d mem=%d disk=%d", serverBody.Server.CPUAllocatedMillis, serverBody.Server.MemoryAllocatedBytes, serverBody.Server.DiskAllocatedBytes)
 	}
 
 	var hbCount int
@@ -175,6 +197,40 @@ func TestAgentRegistrationAndHeartbeat(t *testing.T) {
 	decode(t, get2, &serverBody)
 	if serverBody.Server.Status != "DEGRADED" {
 		t.Fatalf("expected DEGRADED got %s", serverBody.Server.Status)
+	}
+	assertCapacity(t, serverBody.Server.CPUCores, serverBody.Server.MemoryBytes, serverBody.Server.DiskBytes, 2, 12512579584, 48277495808)
+	if serverBody.Server.Hostname != "node-1" {
+		t.Fatalf("hostname=%q", serverBody.Server.Hostname)
+	}
+
+	// Explicit zeros must not erase stored capacity.
+	hbZero, _ := json.Marshal(map[string]any{
+		"agentVersion": "1.0.1", "dockerStatus": "ok",
+		"cpuCores": 0, "memoryTotalBytes": 0, "diskTotalBytes": 0,
+	})
+	if z := doAuthed(t, srv, http.MethodPost, "/api/v1/agents/heartbeat", hbZero, reg.Agent.Credential); z.Code != http.StatusOK {
+		t.Fatalf("zero heartbeat status=%d body=%s", z.Code, z.Body.String())
+	}
+	getZero := doJSON(t, srv, http.MethodGet, "/api/v1/servers/"+serverID, nil, ownerTok)
+	decode(t, getZero, &serverBody)
+	assertCapacity(t, serverBody.Server.CPUCores, serverBody.Server.MemoryBytes, serverBody.Server.DiskBytes, 2, 12512579584, 48277495808)
+	if serverBody.Server.CPUAllocatedMillis != 0 || serverBody.Server.MemoryAllocatedBytes != 0 || serverBody.Server.DiskAllocatedBytes != 0 {
+		t.Fatalf("allocated counters changed after zero heartbeat")
+	}
+
+	// A later positive inventory replaces the stored totals.
+	hbResize, _ := json.Marshal(map[string]any{
+		"agentVersion": "1.0.1", "dockerStatus": "ok",
+		"cpuCores": 4, "memoryTotalBytes": int64(17179869184), "diskTotalBytes": int64(107374182400),
+	})
+	if resized := doAuthed(t, srv, http.MethodPost, "/api/v1/agents/heartbeat", hbResize, reg.Agent.Credential); resized.Code != http.StatusOK {
+		t.Fatalf("resize heartbeat status=%d body=%s", resized.Code, resized.Body.String())
+	}
+	getResize := doJSON(t, srv, http.MethodGet, "/api/v1/servers/"+serverID, nil, ownerTok)
+	decode(t, getResize, &serverBody)
+	assertCapacity(t, serverBody.Server.CPUCores, serverBody.Server.MemoryBytes, serverBody.Server.DiskBytes, 4, 17179869184, 107374182400)
+	if serverBody.Server.Hostname != "node-1" {
+		t.Fatalf("hostname=%q", serverBody.Server.Hostname)
 	}
 
 	// Maintenance should not be overwritten by heartbeat.
@@ -256,6 +312,13 @@ func createOrg(t *testing.T, srv *server.Server, token, name, slug string) strin
 	}
 	decode(t, rec, &out)
 	return out.Organization.ID
+}
+
+func assertCapacity(t *testing.T, cpu *int, mem, disk *int64, wantCPU int, wantMem, wantDisk int64) {
+	t.Helper()
+	if cpu == nil || *cpu != wantCPU || mem == nil || *mem != wantMem || disk == nil || *disk != wantDisk {
+		t.Fatalf("capacity cpu=%v mem=%v disk=%v, want %d %d %d", cpu, mem, disk, wantCPU, wantMem, wantDisk)
+	}
 }
 
 func createServer(t *testing.T, srv *server.Server, token, orgID string) string {

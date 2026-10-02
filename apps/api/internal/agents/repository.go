@@ -25,7 +25,7 @@ type Repository interface {
 	CompleteRegistration(ctx context.Context, agentID uuid.UUID, credentialHash, agentVersion string, at time.Time) (Agent, error)
 	GetByCredentialHash(ctx context.Context, credentialHash string) (AgentRecord, error)
 	TouchAgent(ctx context.Context, agentID uuid.UUID, version string, at time.Time) error
-	ApplyServerHeartbeat(ctx context.Context, serverID uuid.UUID, at time.Time, status string, dockerVersion *string) error
+	ApplyServerHeartbeat(ctx context.Context, serverID uuid.UUID, at time.Time, status string, dockerVersion *string, cpuCores int, memoryBytes, diskBytes int64) error
 	InsertHeartbeat(ctx context.Context, orgID, serverID, agentID uuid.UUID, in HeartbeatInput, at time.Time) error
 	PruneHeartbeats(ctx context.Context, serverID uuid.UUID, keep int) error
 	MarkHeartbeatExpired(ctx context.Context, cutoff time.Time) ([]ExpiredServer, error)
@@ -188,7 +188,7 @@ func (r *PostgresRepository) TouchAgent(ctx context.Context, agentID uuid.UUID, 
 	return err
 }
 
-func (r *PostgresRepository) ApplyServerHeartbeat(ctx context.Context, serverID uuid.UUID, at time.Time, status string, dockerVersion *string) error {
+func (r *PostgresRepository) ApplyServerHeartbeat(ctx context.Context, serverID uuid.UUID, at time.Time, status string, dockerVersion *string, cpuCores int, memoryBytes, diskBytes int64) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE servers
 		SET last_heartbeat_at = $2,
@@ -197,8 +197,11 @@ func (r *PostgresRepository) ApplyServerHeartbeat(ctx context.Context, serverID 
 		        ELSE $3
 		    END,
 		    docker_version = COALESCE($4, docker_version),
+		    cpu_cores = CASE WHEN $5::integer > 0 THEN $5::integer ELSE cpu_cores END,
+		    memory_bytes = CASE WHEN $6::bigint > 0 THEN $6::bigint ELSE memory_bytes END,
+		    disk_bytes = CASE WHEN $7::bigint > 0 THEN $7::bigint ELSE disk_bytes END,
 		    updated_at = NOW()
-		WHERE id = $1 AND deleted_at IS NULL`, serverID, at, status, dockerVersion)
+		WHERE id = $1 AND deleted_at IS NULL`, serverID, at, status, dockerVersion, cpuCores, memoryBytes, diskBytes)
 	return err
 }
 

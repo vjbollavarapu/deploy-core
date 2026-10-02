@@ -269,7 +269,7 @@ func (s *Service) Heartbeat(ctx context.Context, agent Agent, in HeartbeatInput)
 	if err := s.repo.TouchAgent(ctx, agent.ID, in.AgentVersion, at); err != nil {
 		return err
 	}
-	if err := s.repo.ApplyServerHeartbeat(ctx, agent.ServerID, at, derived, in.DockerVersion); err != nil {
+	if err := s.repo.ApplyServerHeartbeat(ctx, agent.ServerID, at, derived, in.DockerVersion, in.CPUCores, in.MemoryTotalBytes, in.DiskTotalBytes); err != nil {
 		return err
 	}
 	if err := s.repo.InsertHeartbeat(ctx, agent.OrganizationID, agent.ServerID, agent.ID, in, at); err != nil {
