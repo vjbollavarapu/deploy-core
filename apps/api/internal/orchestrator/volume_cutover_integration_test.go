@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -509,6 +511,240 @@ func TestWritableRollbackStopsActiveHolder(t *testing.T) {
 	}
 	if slotName != replicas.ContainerName("api", 1, 0) || slotRevision != *active.ActiveRevisionID {
 		t.Fatalf("slot after rollback = %s %s", slotName, slotRevision)
+	}
+}
+
+func TestWritablePendingReservationIsNotStopped(t *testing.T) {
+	pool, orgID, envID, serverID, appID, userID := seedWritableApp(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `UPDATE applications SET slug = 'redis', name = 'redis' WHERE id = $1`, appID); err != nil {
+		t.Fatal(err)
+	}
+	legacyRev := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO revisions (
+			id, organization_id, application_id, revision_number, status, image_tag
+		) VALUES ($1, $2, $3, 2, 'FAILED', 'redis:7-alpine')`, legacyRev, orgID, appID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO application_replicas (
+			organization_id, application_id, revision_id, replica_index, container_name, container_id, status
+		) VALUES ($1, $2, $3, 0, 'redis-r2-0', NULL, 'PENDING')`, orgID, appID, legacyRev); err != nil {
+		t.Fatal(err)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	deployRepo := deployments.NewPostgresRepository(pool)
+	orch := New(pool, deployRepo, log, Config{SimulateAgent: true})
+	dep, err := deployRepo.CreateQueued(ctx, orgID, appID, envID, &serverID, deployments.TriggerManual, nil, nil, "pending-reservation", userID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Execute(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := deployRepo.Get(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != deployments.StatusRunning || got.TargetRevisionID == nil {
+		t.Fatalf("status=%s target=%v", got.Status, got.TargetRevisionID)
+	}
+	for _, cmd := range orch.simulated {
+		if cmd.deploymentID != dep.ID || cmd.op != protocol.OpStopContainer {
+			continue
+		}
+		name, _ := cmd.payload["containerName"].(string)
+		if name == "redis-r2-0" {
+			t.Fatal("PENDING reservation redis-r2-0 was stopped")
+		}
+	}
+	var revNumber int
+	if err := pool.QueryRow(ctx, `SELECT revision_number FROM revisions WHERE id = $1`, *got.TargetRevisionID).Scan(&revNumber); err != nil {
+		t.Fatal(err)
+	}
+	wantName := replicas.ContainerName("redis", revNumber, 0)
+	if wantName != "dc-redis-r"+strconv.Itoa(revNumber)+"-1" {
+		t.Fatalf("platform name = %s", wantName)
+	}
+	var slotName string
+	var slotRevision uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT container_name, revision_id
+		FROM application_replicas
+		WHERE application_id = $1 AND replica_index = 0`, appID).Scan(&slotName, &slotRevision); err != nil {
+		t.Fatal(err)
+	}
+	if slotName != wantName || slotRevision != *got.TargetRevisionID {
+		t.Fatalf("slot name=%s revision=%s, want %s %s", slotName, slotRevision, wantName, *got.TargetRevisionID)
+	}
+	var deployed bool
+	for _, cmd := range orch.simulated {
+		if cmd.deploymentID != dep.ID || cmd.op != protocol.OpDeployRevision {
+			continue
+		}
+		if cmd.payload["phase"] != "create_container" || cmd.payload["containerName"] != wantName {
+			continue
+		}
+		if cmd.payload["revisionId"] != got.TargetRevisionID.String() || cmd.payload["revisionNumber"] != revNumber {
+			t.Fatalf("deploy payload revisionId=%v revisionNumber=%v", cmd.payload["revisionId"], cmd.payload["revisionNumber"])
+		}
+		deployed = true
+	}
+	if !deployed {
+		t.Fatalf("missing DEPLOY_REVISION for %s", wantName)
+	}
+}
+
+func TestWritableMaterializedHolderStopsBeforeDeploy(t *testing.T) {
+	pool, orgID, envID, serverID, appID, userID := seedWritableApp(t)
+	ctx := context.Background()
+	holderRev := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO revisions (
+			id, organization_id, application_id, revision_number, status, image_tag
+		) VALUES ($1, $2, $3, 1, 'ACTIVE', 'redis:7-alpine')`, holderRev, orgID, appID); err != nil {
+		t.Fatal(err)
+	}
+	holderName := replicas.ContainerName("api", 1, 0)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO application_replicas (
+			organization_id, application_id, revision_id, replica_index, container_name, status
+		) VALUES ($1, $2, $3, 0, $4, 'RUNNING')`, orgID, appID, holderRev, holderName); err != nil {
+		t.Fatal(err)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	deployRepo := deployments.NewPostgresRepository(pool)
+	orch := New(pool, deployRepo, log, Config{SimulateAgent: true})
+	dep, err := deployRepo.CreateQueued(ctx, orgID, appID, envID, &serverID, deployments.TriggerManual, nil, nil, "materialized-holder", userID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Execute(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := deployRepo.Get(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != deployments.StatusRunning || got.TargetRevisionID == nil {
+		t.Fatalf("status=%s target=%v", got.Status, got.TargetRevisionID)
+	}
+	var revNumber int
+	if err := pool.QueryRow(ctx, `SELECT revision_number FROM revisions WHERE id = $1`, *got.TargetRevisionID).Scan(&revNumber); err != nil {
+		t.Fatal(err)
+	}
+	if revNumber != 2 {
+		t.Fatalf("target revision number=%d", revNumber)
+	}
+	nextName := replicas.ContainerName("api", 2, 0)
+	stopAt, deployAt := -1, -1
+	for i, cmd := range orch.simulated {
+		if cmd.deploymentID != dep.ID {
+			continue
+		}
+		name, _ := cmd.payload["containerName"].(string)
+		if cmd.op == protocol.OpStopContainer && name == holderName && cmd.payload["reason"] == cutoverReason && stopAt < 0 {
+			stopAt = i
+		}
+		if cmd.op == protocol.OpDeployRevision && name == nextName && deployAt < 0 {
+			deployAt = i
+			if cmd.payload["revisionNumber"] != 2 || cmd.payload["revisionId"] != got.TargetRevisionID.String() {
+				t.Fatalf("deploy payload = %#v", cmd.payload)
+			}
+		}
+	}
+	if holderName != "dc-api-r1-1" || nextName != "dc-api-r2-1" {
+		t.Fatalf("names holder=%s next=%s", holderName, nextName)
+	}
+	if stopAt < 0 || deployAt < 0 || stopAt > deployAt {
+		t.Fatalf("materialized holder was not stopped before deploy: stop=%d deploy=%d", stopAt, deployAt)
+	}
+}
+
+func TestWritableMaterializedHolderDockerMissStillFails(t *testing.T) {
+	pool, orgID, envID, serverID, appID, userID := seedWritableApp(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `UPDATE servers SET status = 'ONLINE' WHERE id = $1`, serverID); err != nil {
+		t.Fatal(err)
+	}
+	holderRev := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO revisions (
+			id, organization_id, application_id, revision_number, status, image_tag
+		) VALUES ($1, $2, $3, 1, 'ACTIVE', 'redis:7-alpine')`, holderRev, orgID, appID); err != nil {
+		t.Fatal(err)
+	}
+	holderName := replicas.ContainerName("api", 1, 0)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO application_replicas (
+			organization_id, application_id, revision_id, replica_index, container_name, status
+		) VALUES ($1, $2, $3, 0, $4, 'RUNNING')`, orgID, appID, holderRev, holderName); err != nil {
+		t.Fatal(err)
+	}
+
+	failCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go failStopContainersNotFound(failCtx, pool, serverID)
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	deployRepo := deployments.NewPostgresRepository(pool)
+	orch := New(pool, deployRepo, log, Config{})
+	dep, err := deployRepo.CreateQueued(ctx, orgID, appID, envID, &serverID, deployments.TriggerManual, nil, nil, "holder-missing", userID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Execute(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := deployRepo.Get(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != deployments.StatusContainerFailed {
+		t.Fatalf("status=%s, want CONTAINER_FAILED", got.Status)
+	}
+	if got.ErrorMessage == nil || !strings.Contains(*got.ErrorMessage, "DOCKER_NOT_FOUND") {
+		t.Fatalf("error = %v", got.ErrorMessage)
+	}
+	cmds := loadDeploymentCommands(t, ctx, pool, dep.ID)
+	sawStop := false
+	for _, cmd := range cmds {
+		name, _ := cmd.payload["containerName"].(string)
+		if cmd.op == protocol.OpStopContainer && name == holderName {
+			sawStop = true
+		}
+		if cmd.op == protocol.OpDeployRevision {
+			t.Fatal("DEPLOY_REVISION ran after the holder stop failed")
+		}
+	}
+	if !sawStop {
+		t.Fatal("missing STOP_CONTAINER for the materialized holder")
+	}
+}
+
+func failStopContainersNotFound(ctx context.Context, pool *pgxpool.Pool, serverID uuid.UUID) {
+	ticker := time.NewTicker(15 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_, _ = pool.Exec(context.Background(), `
+				UPDATE agent_commands
+				SET status = 'completed', finished_at = NOW()
+				WHERE server_id = $1 AND status = 'pending' AND operation <> 'STOP_CONTAINER'`, serverID)
+			_, _ = pool.Exec(context.Background(), `
+				UPDATE agent_commands
+				SET status = 'failed',
+				    error_code = 'DOCKER_NOT_FOUND',
+				    error_message = 'inspect container: No such container',
+				    finished_at = NOW()
+				WHERE server_id = $1 AND status = 'pending' AND operation = 'STOP_CONTAINER'`, serverID)
+		}
 	}
 }
 

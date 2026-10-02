@@ -174,13 +174,24 @@ func predecessorNames(list []replicas.Replica, previousRevision uuid.UUID) []str
 	return names
 }
 
+// writableVolumeHolder reports whether a replica slot may already have a
+// container mounted on the writable volume. UpsertSlot writes PENDING before
+// Docker create, so that status is only a name reservation. Every later
+// status can represent a materialized container and must be stopped first.
+func writableVolumeHolder(rep replicas.Replica) bool {
+	if rep.ContainerName == "" || rep.RevisionID == nil {
+		return false
+	}
+	return rep.Status != replicas.StatusPending
+}
+
 // stopWritableHolders stops replica containers that already belong to a
 // revision. The active revision's containers are marked for restore. Any other
-// revision-backed container is stopped so it releases the volume. A slot with
-// no revision id is only a planned name and is not a volume holder.
+// materialized revision-backed container is stopped so it releases the volume.
+// A slot with no revision id, or a PENDING pre-create reservation, is not a holder.
 func (o *Orchestrator) stopWritableHolders(ctx context.Context, d deployments.Deployment, list []replicas.Replica, active *activeRev) error {
 	for _, rep := range list {
-		if rep.ContainerName == "" || rep.RevisionID == nil {
+		if !writableVolumeHolder(rep) {
 			continue
 		}
 		reason := cutoverReleaseReason

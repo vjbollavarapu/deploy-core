@@ -64,6 +64,37 @@ func TestVolumeSnapshotPayloadAndCutover(t *testing.T) {
 	}
 }
 
+func TestWritableVolumeHolderSkipsReservationOnly(t *testing.T) {
+	rev := uuid.New()
+	reservation := replicas.Replica{
+		RevisionID:    &rev,
+		ContainerName: "redis-r2-0",
+		Status:        replicas.StatusPending,
+	}
+	if writableVolumeHolder(reservation) {
+		t.Fatal("PENDING reservation was treated as a holder")
+	}
+	if writableVolumeHolder(replicas.Replica{ContainerName: "redis-r0-0", Status: replicas.StatusStarting}) {
+		t.Fatal("null revision was treated as a holder")
+	}
+	if writableVolumeHolder(replicas.Replica{RevisionID: &rev, Status: replicas.StatusRunning}) {
+		t.Fatal("empty container name was treated as a holder")
+	}
+	for _, status := range []string{
+		replicas.StatusStarting,
+		replicas.StatusRunning,
+		replicas.StatusUnhealthy,
+		replicas.StatusStopping,
+		replicas.StatusStopped,
+		replicas.StatusFailed,
+	} {
+		holder := replicas.Replica{RevisionID: &rev, ContainerName: "dc-api-r1-1", Status: status}
+		if !writableVolumeHolder(holder) {
+			t.Fatalf("status %s was not treated as a materialized holder", status)
+		}
+	}
+}
+
 func TestReadOnlyLabel(t *testing.T) {
 	if readOnlyLabel([]byte(`{"readOnly":true}`)) != true {
 		t.Fatal("expected readOnly label")
