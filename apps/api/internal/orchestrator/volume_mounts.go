@@ -174,13 +174,13 @@ func predecessorNames(list []replicas.Replica, previousRevision uuid.UUID) []str
 	return names
 }
 
-// stopWritableHolders stops every replica container currently recorded for the
-// application. The active revision's containers are marked for restore. Any
-// other recorded container is stopped so it releases the volume and is not
-// started again.
+// stopWritableHolders stops replica containers that already belong to a
+// revision. The active revision's containers are marked for restore. Any other
+// revision-backed container is stopped so it releases the volume. A slot with
+// no revision id is only a planned name and is not a volume holder.
 func (o *Orchestrator) stopWritableHolders(ctx context.Context, d deployments.Deployment, list []replicas.Replica, active *activeRev) error {
 	for _, rep := range list {
-		if rep.ContainerName == "" {
+		if rep.ContainerName == "" || rep.RevisionID == nil {
 			continue
 		}
 		reason := cutoverReleaseReason

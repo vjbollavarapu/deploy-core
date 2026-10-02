@@ -2,6 +2,7 @@ package replicas
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/deploycore/deploy-core/apps/api/internal/jobs"
 	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -88,12 +90,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, appID uuid.UUID, replaceInde
 		byIndex[rep.ReplicaIndex] = rep
 	}
 
-	var activeRev *uuid.UUID
-	var revNumber int
-	_ = r.pool.QueryRow(ctx, `
-		SELECT id, revision_number FROM revisions
-		WHERE application_id = $1 AND status = 'ACTIVE'
-		ORDER BY revision_number DESC LIMIT 1`, appID).Scan(&activeRev, &revNumber)
+	activeRev, revNumber, err := r.activeRevision(ctx, appID)
+	if err != nil {
+		return err
+	}
+	// The first deployment owns replica materialization. A missing revision is
+	// a no-op, not revision 0, and must not rewrite a planned slot.
+	if activeRev == nil {
+		r.log.Info("skipping replica reconcile; no active revision",
+			slog.String("applicationId", appID.String()),
+		)
+		return nil
+	}
 
 	for i := 0; i < desired; i++ {
 		rep, ok := byIndex[i]
@@ -166,6 +174,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, appID uuid.UUID, replaceInde
 		_, _ = r.repo.DeleteAboveIndex(ctx, appID, desired)
 	}
 	return nil
+}
+
+func (r *Reconciler) activeRevision(ctx context.Context, appID uuid.UUID) (*uuid.UUID, int, error) {
+	var id uuid.UUID
+	var number int
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, revision_number FROM revisions
+		WHERE application_id = $1 AND status = 'ACTIVE'
+		ORDER BY revision_number DESC LIMIT 1`, appID).Scan(&id, &number)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, 0, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	return &id, number, nil
 }
 
 func (r *Reconciler) hasInFlightDeployment(ctx context.Context, appID uuid.UUID) (bool, error) {
