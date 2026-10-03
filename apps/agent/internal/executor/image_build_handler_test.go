@@ -30,8 +30,10 @@ func TestBuildImageHandler_RejectsArbitraryHostFilesystem(t *testing.T) {
 	for _, attack := range attacks {
 		t.Run(attack, func(t *testing.T) {
 			payload := map[string]any{
-				"deploymentId": "dep-attack-1",
-				"contextPath":  attack,
+				"phase":          "build",
+				"deploymentId":   "dep-attack-1",
+				"dockerfilePath": "Dockerfile",
+				"contextPath":    attack,
 			}
 			_, err := h.Execute(context.Background(), payload)
 			if err == nil {
@@ -59,7 +61,9 @@ func TestBuildImageHandler_RejectsArbitraryDockerfilePath(t *testing.T) {
 	for _, attack := range attacks {
 		t.Run(attack, func(t *testing.T) {
 			payload := map[string]any{
+				"phase":          "build",
 				"deploymentId":   "dep-attack-df",
+				"contextPath":    ".",
 				"dockerfilePath": attack,
 			}
 			_, err := h.Execute(context.Background(), payload)
@@ -79,26 +83,34 @@ func TestBuildImageHandler_WorkspaceLifecycleAndRetention(t *testing.T) {
 	wsMgr := workspace.NewManager(wsRoot)
 
 	depIDClean := "dep-clean-on-success"
-	payloadClean := map[string]any{
+	h := buildImageHandler(nil, nil, wsMgr, nil)
+	_, err := h.Execute(context.Background(), map[string]any{
+		"phase":        "fetch_source",
 		"deploymentId": depIDClean,
 		"files": map[string]any{
 			"Dockerfile": "FROM alpine\n",
 		},
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wsRoot, depIDClean, "Dockerfile")); err != nil {
+		t.Fatalf("fetched source did not survive until build: %v", err)
+	}
+	_, err = h.Execute(context.Background(), map[string]any{
+		"phase":           "build",
+		"deploymentId":    depIDClean,
+		"dockerfilePath":  "Dockerfile",
+		"contextPath":     ".",
 		"retentionPolicy": "clean_always",
+	})
+	if err == nil || !strings.Contains(err.Error(), "DOCKER_UNAVAILABLE") {
+		t.Fatalf("expected docker unavailable, got %v", err)
 	}
 
-	// Will fail at docker build step (nil cli), but cleanup must execute in defer
-	defer func() {
-		_ = recover()
-	}()
-
-	h := buildImageHandler(nil, nil, wsMgr, nil)
-	_, _ = h.Execute(context.Background(), payloadClean)
-
-	// Verify workspace directory was cleaned up
 	cleanPath := filepath.Join(wsRoot, depIDClean)
 	if _, err := os.Stat(cleanPath); !os.IsNotExist(err) {
-		t.Errorf("expected workspace %q to be deleted by retention policy", cleanPath)
+		t.Errorf("expected workspace %q to be deleted after build failure", cleanPath)
 	}
 }
 
@@ -108,25 +120,34 @@ func TestBuildImageHandler_WorkspaceRetention_Retain(t *testing.T) {
 	wsMgr := workspace.NewManager(wsRoot)
 
 	depIDRetain := "dep-retained"
-	payloadRetain := map[string]any{
+	h := buildImageHandler(nil, nil, wsMgr, nil)
+	_, err := h.Execute(context.Background(), map[string]any{
+		"phase":        "fetch_source",
 		"deploymentId": depIDRetain,
 		"files": map[string]any{
 			"Dockerfile": "FROM alpine\n",
 		},
 		"retentionPolicy": "retain",
+	})
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
 	}
-
-	defer func() {
-		_ = recover()
-	}()
-
-	h := buildImageHandler(nil, nil, wsMgr, nil)
-	_, _ = h.Execute(context.Background(), payloadRetain)
-
-	// Verify workspace directory was retained
 	retainPath := filepath.Join(wsRoot, depIDRetain)
 	if stat, err := os.Stat(retainPath); err != nil || !stat.IsDir() {
-		t.Errorf("expected workspace %q to be retained, err: %v", retainPath, err)
+		t.Fatalf("expected fetched workspace %q to remain, err: %v", retainPath, err)
+	}
+	_, err = h.Execute(context.Background(), map[string]any{
+		"phase":           "build",
+		"deploymentId":    depIDRetain,
+		"dockerfilePath":  "Dockerfile",
+		"contextPath":     ".",
+		"retentionPolicy": "retain",
+	})
+	if err == nil {
+		t.Fatal("expected build to fail without a docker client")
+	}
+	if _, err := os.Stat(retainPath); !os.IsNotExist(err) {
+		t.Fatalf("expected workspace %q to be cleaned after build, err: %v", retainPath, err)
 	}
 }
 

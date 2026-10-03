@@ -130,9 +130,23 @@ func TestPayloadsValidation(t *testing.T) {
 	if err := bip.Validate(); err == nil {
 		t.Error("expected empty BuildImagePayload to fail")
 	}
-	bip = BuildImagePayload{ApplicationID: "app-1", ImageTag: "img:1"}
+	bip = BuildImagePayload{
+		Phase:         BuildPhaseFetchSource,
+		DeploymentID:  "dep-1",
+		RepositoryURL: "https://github.com/acme/app",
+		GitBranch:     "main",
+	}
 	if err := bip.Validate(); err != nil {
-		t.Errorf("expected valid BuildImagePayload to pass, got %v", err)
+		t.Errorf("expected valid fetch BuildImagePayload to pass, got %v", err)
+	}
+	bip = BuildImagePayload{
+		Phase:          BuildPhaseBuild,
+		DeploymentID:   "dep-1",
+		DockerfilePath: "Dockerfile.prod",
+		ContextPath:    "apps/backend",
+	}
+	if err := bip.Validate(); err != nil {
+		t.Errorf("expected valid build BuildImagePayload to pass, got %v", err)
 	}
 
 	// CreateDatabasePayload

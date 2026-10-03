@@ -3,31 +3,121 @@ package protocol
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"path"
 	"strings"
 )
 
-// BuildImagePayload defines inputs for OpBuildImage.
+const (
+	BuildPhaseFetchSource = "fetch_source"
+	BuildPhaseBuild       = "build"
+)
+
+// BuildImagePayload is the BUILD_IMAGE contract shared by the control plane and the Agent.
+// dockerfilePath is a path relative to contextPath. contextPath is relative to the deployment workspace.
+// dockerfileContent is optional inline Dockerfile text, never a filesystem path.
 type BuildImagePayload struct {
-	ApplicationID   string            `json:"applicationId"`
-	DeploymentID    string            `json:"deploymentId"`
-	RevisionID      string            `json:"revisionId"`
-	ImageTag        string            `json:"imageTag"`
-	Dockerfile      string            `json:"dockerfile,omitempty"`
-	ContextDir      string            `json:"contextDir,omitempty"`
-	BuildContextURL string            `json:"buildContextUrl,omitempty"`
-	BuildArgs       map[string]string `json:"buildArgs,omitempty"`
-	NoCache         bool              `json:"noCache,omitempty"`
+	Phase             string            `json:"phase"`
+	DeploymentID      string            `json:"deploymentId"`
+	ApplicationID     string            `json:"applicationId,omitempty"`
+	RevisionID        string            `json:"revisionId,omitempty"`
+	RepositoryURL     string            `json:"repositoryUrl,omitempty"`
+	GitBranch         string            `json:"gitBranch,omitempty"`
+	DockerfilePath    string            `json:"dockerfilePath,omitempty"`
+	ContextPath       string            `json:"contextPath,omitempty"`
+	DockerfileContent string            `json:"dockerfileContent,omitempty"`
+	Archive           string            `json:"archive,omitempty"`
+	ArchiveFormat     string            `json:"archiveFormat,omitempty"`
+	StripComponents   int               `json:"stripComponents,omitempty"`
+	Files             map[string]string `json:"files,omitempty"`
+	RetentionPolicy   string            `json:"retentionPolicy,omitempty"`
+	BuildArgs         map[string]string `json:"buildArgs,omitempty"`
+	Tags              []string          `json:"tags,omitempty"`
+	Target            string            `json:"target,omitempty"`
+	TargetStage       string            `json:"targetStage,omitempty"`
+	Platform          string            `json:"platform,omitempty"`
+	CachePolicy       string            `json:"cachePolicy,omitempty"`
+	TimeoutSeconds    *int              `json:"timeoutSeconds,omitempty"`
 }
 
-// Validate verifies BuildImagePayload.
+// Validate checks the phase and the source or build fields that phase requires.
 func (p *BuildImagePayload) Validate() error {
-	if strings.TrimSpace(p.ApplicationID) == "" {
-		return errors.New("applicationId is required")
+	if strings.TrimSpace(p.DeploymentID) == "" {
+		return errors.New("deploymentId is required")
 	}
-	if strings.TrimSpace(p.ImageTag) == "" {
-		return errors.New("imageTag is required")
+	if strings.ContainsAny(p.DeploymentID, "/\\") || strings.Contains(p.DeploymentID, "..") {
+		return errors.New("deploymentId is invalid")
+	}
+	switch strings.TrimSpace(p.Phase) {
+	case BuildPhaseFetchSource:
+		if strings.TrimSpace(p.RepositoryURL) == "" && strings.TrimSpace(p.Archive) == "" && len(p.Files) == 0 {
+			return errors.New("repositoryUrl is required to fetch source")
+		}
+		if strings.TrimSpace(p.RepositoryURL) != "" || strings.TrimSpace(p.GitBranch) != "" {
+			if err := validateRepositoryURL(p.RepositoryURL); err != nil {
+				return err
+			}
+			if err := validateGitBranch(p.GitBranch); err != nil {
+				return err
+			}
+		}
+		return nil
+	case BuildPhaseBuild:
+		if err := validateRelativeBuildPath("contextPath", p.ContextPath); err != nil {
+			return err
+		}
+		if err := validateRelativeBuildPath("dockerfilePath", p.DockerfilePath); err != nil {
+			return err
+		}
+		return nil
+	default:
+		return errors.New("phase must be fetch_source or build")
+	}
+}
+
+func validateRepositoryURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.ContainsAny(raw, " \r\n\t\x00") {
+		return errors.New("repositoryUrl must be an https URL")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Scheme, "https") || parsed.User != nil {
+		return errors.New("repositoryUrl must be an https URL without credentials")
 	}
 	return nil
+}
+
+func validateGitBranch(branch string) error {
+	branch = strings.TrimSpace(branch)
+	if branch == "" || strings.ContainsAny(branch, " \t\r\n\x00") || strings.Contains(branch, "..") || strings.HasPrefix(branch, "-") {
+		return errors.New("gitBranch is invalid")
+	}
+	return nil
+}
+
+func validateRelativeBuildPath(field, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("%s is required", field)
+	}
+	invalid := strings.ContainsAny(value, "\r\n\x00") ||
+		strings.HasPrefix(value, "/") ||
+		strings.Contains(value, `\`)
+	cleaned := path.Clean(strings.ReplaceAll(value, `\`, "/"))
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || path.IsAbs(cleaned) {
+		invalid = true
+	}
+	if !invalid {
+		return nil
+	}
+	switch field {
+	case "contextPath":
+		return errors.New("invalid build context")
+	case "dockerfilePath":
+		return errors.New("invalid dockerfile path")
+	default:
+		return fmt.Errorf("invalid %s", field)
+	}
 }
 
 // PullImagePayload defines inputs for OpPullImage.

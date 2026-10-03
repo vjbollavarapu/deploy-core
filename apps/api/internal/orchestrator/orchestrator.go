@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/deploycore/deploy-core/apps/api/internal/agentcmd"
@@ -249,12 +250,34 @@ func (o *Orchestrator) stepFetchingSource(ctx context.Context, d deployments.Dep
 	if err != nil {
 		return o.fail(ctx, d, deployments.StatusFetchingSource, deployments.StatusSourceFailed, "CONFIG_ERROR", err.Error())
 	}
-	// Image sources skip remote fetch.
+	// Image sources skip remote fetch and keep the existing pull path.
 	if cfg.SourceType != "image" {
-		if err := o.issueOrSimulate(ctx, d, protocol.OpBuildImage, map[string]any{
-			"phase": "fetch_source", "deploymentId": d.ID.String(),
-		}); err != nil {
-			return o.fail(ctx, d, deployments.StatusFetchingSource, deployments.StatusSourceFailed, "SOURCE_FAILED", err.Error())
+		payload := map[string]any{
+			"phase":         protocol.BuildPhaseFetchSource,
+			"deploymentId":  d.ID.String(),
+			"applicationId": d.ApplicationID.String(),
+		}
+		if d.TargetRevisionID != nil {
+			payload["revisionId"] = d.TargetRevisionID.String()
+		}
+		if cfg.SourceType == "git" {
+			dockerfilePath, contextPath := resolvedBuildPaths(cfg)
+			if _, err := decodeBuildPayload(map[string]any{
+				"phase":          protocol.BuildPhaseBuild,
+				"deploymentId":   d.ID.String(),
+				"dockerfilePath": dockerfilePath,
+				"contextPath":    contextPath,
+			}); err != nil {
+				return o.fail(ctx, d, deployments.StatusFetchingSource, deployments.StatusSourceFailed, protocol.ErrInvalidSourcePath, err.Error())
+			}
+			payload["repositoryUrl"] = strOr(cfg.RepositoryURL, "")
+			payload["gitBranch"] = strOr(cfg.GitBranch, "")
+			if _, err := decodeBuildPayload(payload); err != nil {
+				return o.fail(ctx, d, deployments.StatusFetchingSource, deployments.StatusSourceFailed, protocol.ErrInvalidSourcePath, err.Error())
+			}
+		}
+		if err := o.issueOrSimulate(ctx, d, protocol.OpBuildImage, payload); err != nil {
+			return o.fail(ctx, d, deployments.StatusFetchingSource, deployments.StatusSourceFailed, agentFailureCode(err, protocol.ErrSourceFetchFailed), err.Error())
 		}
 	}
 	return o.advance(ctx, d, deployments.StatusBuilding, "source ready", nil)
@@ -272,20 +295,37 @@ func (o *Orchestrator) stepBuilding(ctx context.Context, d deployments.Deploymen
 		return o.fail(ctx, d, deployments.StatusBuilding, deployments.StatusBuildFailed, "CONFIG_ERROR", err.Error())
 	}
 	op := protocol.OpBuildImage
-	payload := map[string]any{"deploymentId": d.ID.String(), "phase": "build"}
+	payload := map[string]any{"deploymentId": d.ID.String(), "phase": protocol.BuildPhaseBuild}
 	if cfg.SourceType == "image" {
 		op = protocol.OpPullImage
 		payload["phase"] = "pull"
 		if cfg.ImageReference != nil {
 			payload["imageReference"] = *cfg.ImageReference
 		}
+	} else {
+		dockerfilePath, contextPath := resolvedBuildPaths(cfg)
+		payload["applicationId"] = d.ApplicationID.String()
+		payload["dockerfilePath"] = dockerfilePath
+		payload["contextPath"] = contextPath
+		if d.TargetRevisionID != nil {
+			payload["revisionId"] = d.TargetRevisionID.String()
+		}
+		if cfg.SourceType == "git" {
+			payload["repositoryUrl"] = strOr(cfg.RepositoryURL, "")
+			payload["gitBranch"] = strOr(cfg.GitBranch, "")
+			if _, err := decodeBuildPayload(payload); err != nil {
+				return o.fail(ctx, d, deployments.StatusBuilding, deployments.StatusBuildFailed, protocol.ErrInvalidSourcePath, err.Error())
+			}
+		}
 	}
 	if err := o.issueOrSimulate(ctx, d, op, payload); err != nil {
 		failTo := deployments.StatusBuildFailed
+		code := agentFailureCode(err, protocol.ErrImageBuildFailed)
 		if cfg.SourceType == "image" {
 			failTo = deployments.StatusImageFailed
+			code = "BUILD_FAILED"
 		}
-		return o.fail(ctx, d, deployments.StatusBuilding, failTo, "BUILD_FAILED", err.Error())
+		return o.fail(ctx, d, deployments.StatusBuilding, failTo, code, err.Error())
 	}
 	digest := strOr(cfg.ImageReference, "local:candidate")
 	if o.cfg.SimulateAgent {
@@ -853,6 +893,8 @@ type appConfig struct {
 	SourceType     string
 	RepositoryURL  *string
 	GitBranch      *string
+	DockerfilePath *string
+	BuildContext   *string
 	ImageReference *string
 	InternalPort   *int
 	HealthCheck    map[string]any
@@ -866,12 +908,12 @@ func (o *Orchestrator) loadAppConfig(ctx context.Context, appID uuid.UUID) (appC
 	var c appConfig
 	var health, runtime []byte
 	err := o.pool.QueryRow(ctx, `
-		SELECT source_type, repository_url, git_branch, image_reference, internal_port,
+		SELECT source_type, repository_url, git_branch, dockerfile_path, build_context, image_reference, internal_port,
 		       health_check, runtime_config, cpu_limit_millis, memory_limit_bytes, restart_policy
 		FROM application_configs
 		WHERE application_id = $1
 		ORDER BY version DESC LIMIT 1`, appID).Scan(
-		&c.SourceType, &c.RepositoryURL, &c.GitBranch, &c.ImageReference, &c.InternalPort,
+		&c.SourceType, &c.RepositoryURL, &c.GitBranch, &c.DockerfilePath, &c.BuildContext, &c.ImageReference, &c.InternalPort,
 		&health, &runtime, &c.CPULimitMillis, &c.MemoryLimit, &c.RestartPolicy,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -952,10 +994,13 @@ func (o *Orchestrator) buildEffectiveConfig(ctx context.Context, d deployments.D
 	if err != nil {
 		return nil, nil, nil, cfg, err
 	}
+	dockerfilePath, contextPath := resolvedBuildPaths(cfg)
 	eff = map[string]any{
 		"sourceType":     cfg.SourceType,
 		"repositoryUrl":  cfg.RepositoryURL,
 		"gitBranch":      cfg.GitBranch,
+		"dockerfilePath": dockerfilePath,
+		"buildContext":   contextPath,
 		"imageReference": cfg.ImageReference,
 		"internalPort":   cfg.InternalPort,
 		"restartPolicy":  cfg.RestartPolicy,
@@ -1236,6 +1281,70 @@ func strOr(v *string, fallback string) string {
 		return fallback
 	}
 	return *v
+}
+
+func resolvedBuildPaths(cfg appConfig) (dockerfilePath, contextPath string) {
+	dockerfilePath = "Dockerfile"
+	if cfg.DockerfilePath != nil {
+		if value := strings.TrimSpace(*cfg.DockerfilePath); value != "" {
+			dockerfilePath = value
+		}
+	}
+	contextPath = "."
+	if cfg.BuildContext != nil {
+		if value := strings.TrimSpace(*cfg.BuildContext); value != "" {
+			contextPath = value
+		}
+	}
+	return dockerfilePath, contextPath
+}
+
+func decodeBuildPayload(payload map[string]any) (protocol.BuildImagePayload, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return protocol.BuildImagePayload{}, err
+	}
+	var parsed protocol.BuildImagePayload
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return protocol.BuildImagePayload{}, err
+	}
+	return parsed, parsed.Validate()
+}
+
+func agentFailureCode(err error, fallback string) string {
+	msg := err.Error()
+	for _, code := range []string{
+		protocol.ErrSourceFetchFailed,
+		protocol.ErrInvalidSourcePath,
+		protocol.ErrSourceNotReady,
+		protocol.ErrDockerfileNotFound,
+		protocol.ErrDockerUnavailable,
+		protocol.ErrImageBuildFailed,
+	} {
+		if strings.HasPrefix(msg, code+":") {
+			return code
+		}
+	}
+	return fallback
+}
+
+// SimulatedCommand is an agent operation captured while SimulateAgent is set.
+type SimulatedCommand struct {
+	Operation string
+	Payload   map[string]any
+}
+
+// SimulatedCommands returns a copy of commands recorded during a simulated deployment.
+func (o *Orchestrator) SimulatedCommands() []SimulatedCommand {
+	out := make([]SimulatedCommand, len(o.simulated))
+	for i, cmd := range o.simulated {
+		payload := make(map[string]any, len(cmd.payload))
+		for key, value := range cmd.payload {
+			payload[key] = value
+		}
+		out[i] = SimulatedCommand{Operation: cmd.op, Payload: payload}
+	}
+	return out
 }
 
 func strVal(v *string) string {

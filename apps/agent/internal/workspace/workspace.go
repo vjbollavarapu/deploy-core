@@ -127,6 +127,36 @@ func (m *Manager) Create(deploymentID string) (*Workspace, error) {
 	return ws, nil
 }
 
+// Reset replaces only this deployment's workspace with an empty directory.
+// A symlink at the workspace path is removed without following it.
+func (m *Manager) Reset(deploymentID string) (*Workspace, error) {
+	cleanID := strings.TrimSpace(deploymentID)
+	if !deploymentIDRE.MatchString(cleanID) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidDeploymentID, deploymentID)
+	}
+	if err := os.MkdirAll(m.workspacesRoot, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create workspaces root: %w", err)
+	}
+	wsDir := filepath.Join(m.workspacesRoot, cleanID)
+	rel, err := filepath.Rel(m.workspacesRoot, wsDir)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidDeploymentID, deploymentID)
+	}
+	if info, statErr := os.Lstat(wsDir); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			if err := os.Remove(wsDir); err != nil {
+				return nil, fmt.Errorf("failed to remove workspace symlink: %w", err)
+			}
+		} else if err := os.RemoveAll(wsDir); err != nil {
+			return nil, fmt.Errorf("failed to reset deployment workspace: %w", err)
+		}
+	}
+	if err := os.MkdirAll(wsDir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create deployment workspace %q: %w", wsDir, err)
+	}
+	return &Workspace{DeploymentID: cleanID, Dir: wsDir}, nil
+}
+
 // Get retrieves an existing workspace if it exists.
 func (m *Manager) Get(deploymentID string) (*Workspace, error) {
 	cleanID := strings.TrimSpace(deploymentID)
@@ -135,9 +165,12 @@ func (m *Manager) Get(deploymentID string) (*Workspace, error) {
 	}
 
 	wsDir := filepath.Join(m.workspacesRoot, cleanID)
-	stat, err := os.Stat(wsDir)
+	stat, err := os.Lstat(wsDir)
 	if err != nil {
 		return nil, err
+	}
+	if stat.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%w: workspace %q is a symlink", ErrSymlinkEscape, wsDir)
 	}
 	if !stat.IsDir() {
 		return nil, fmt.Errorf("workspace path %q is not a directory", wsDir)
@@ -613,6 +646,13 @@ func (w *Workspace) PackageContext(contextSubpath string, maxBytes int64) (io.Re
 		if path == contextDir {
 			return nil
 		}
+		base := filepath.Base(path)
+		if base == ".git" || base == ".deploycore-source.json" || base == ".deploycore-workspace.json" {
+			if fi.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 
 		rel, err := filepath.Rel(contextDir, path)
 		if err != nil {
@@ -680,6 +720,16 @@ func (w *Workspace) PackageContext(contextSubpath string, maxBytes int64) (io.Re
 func (w *Workspace) Cleanup() error {
 	if w.Dir == "" || w.Dir == "/" {
 		return nil
+	}
+	info, err := os.Lstat(w.Dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return os.Remove(w.Dir)
 	}
 	return os.RemoveAll(w.Dir)
 }

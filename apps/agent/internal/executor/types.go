@@ -58,6 +58,10 @@ const (
 	ErrCodeRestoreFailed       ErrCode = protocol.ErrRestoreFailed
 	ErrCodeWorkspaceInvalid    ErrCode = protocol.ErrWorkspaceInvalid
 	ErrCodeAccessDenied        ErrCode = protocol.ErrFilesystemAccessDenied
+	ErrCodeSourceFetchFailed   ErrCode = protocol.ErrSourceFetchFailed
+	ErrCodeSourceNotReady      ErrCode = protocol.ErrSourceNotReady
+	ErrCodeInvalidSourcePath   ErrCode = protocol.ErrInvalidSourcePath
+	ErrCodeDockerfileNotFound  ErrCode = protocol.ErrDockerfileNotFound
 )
 
 // ExecutionError is a structured error produced during command execution.

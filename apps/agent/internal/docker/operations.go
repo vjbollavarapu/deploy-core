@@ -776,6 +776,9 @@ func (c *Client) BuildImage(ctx context.Context, opts BuildImageOptions) (BuildI
 			if errMsg == "" {
 				errMsg = msg.Error
 			}
+			if dockerfileNotFoundMessage(errMsg) {
+				return BuildImageResult{}, &AgentError{Code: ErrCodeDockerfileNotFound, Message: errMsg}
+			}
 			return BuildImageResult{}, &AgentError{Code: ErrCodeImagePullFailed, Message: errMsg}
 		}
 

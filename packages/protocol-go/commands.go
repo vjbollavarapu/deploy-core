@@ -74,6 +74,10 @@ const (
 	ErrWorkspaceInvalid       = "WORKSPACE_INVALID"
 	ErrFilesystemAccessDenied = "FILESYSTEM_ACCESS_DENIED"
 	ErrDisallowedOperation    = "DISALLOWED_OPERATION"
+	ErrSourceFetchFailed      = "SOURCE_FETCH_FAILED"
+	ErrSourceNotReady         = "SOURCE_NOT_READY"
+	ErrInvalidSourcePath      = "INVALID_SOURCE_PATH"
+	ErrDockerfileNotFound     = "DOCKERFILE_NOT_FOUND"
 )
 
 // Agent Command Statuses

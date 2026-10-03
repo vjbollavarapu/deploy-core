@@ -9,13 +9,14 @@ import (
 type ErrCode string
 
 const (
-	ErrCodeNotFound          ErrCode = "DOCKER_NOT_FOUND"
-	ErrCodeConflict          ErrCode = "DOCKER_CONFLICT"
-	ErrCodePermission        ErrCode = "DOCKER_PERMISSION_DENIED"
-	ErrCodeTimeout           ErrCode = "DOCKER_TIMEOUT"
-	ErrCodeDaemonUnavailable ErrCode = "DOCKER_DAEMON_UNAVAILABLE"
-	ErrCodeImagePullFailed   ErrCode = "DOCKER_IMAGE_PULL_FAILED"
-	ErrCodeUnknown           ErrCode = "DOCKER_UNKNOWN_ERROR"
+	ErrCodeNotFound           ErrCode = "DOCKER_NOT_FOUND"
+	ErrCodeConflict           ErrCode = "DOCKER_CONFLICT"
+	ErrCodePermission         ErrCode = "DOCKER_PERMISSION_DENIED"
+	ErrCodeTimeout            ErrCode = "DOCKER_TIMEOUT"
+	ErrCodeDaemonUnavailable  ErrCode = "DOCKER_DAEMON_UNAVAILABLE"
+	ErrCodeDockerfileNotFound ErrCode = "DOCKERFILE_NOT_FOUND"
+	ErrCodeImagePullFailed    ErrCode = "DOCKER_IMAGE_PULL_FAILED"
+	ErrCodeUnknown            ErrCode = "DOCKER_UNKNOWN_ERROR"
 )
 
 // AgentError is a stable error type that abstracts raw Docker daemon errors.
