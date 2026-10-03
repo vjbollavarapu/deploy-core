@@ -13,8 +13,12 @@ import (
 )
 
 type mockLogTransport struct {
-	mu   sync.Mutex
-	logs []protocol.LogIngestRequest
+	mu             sync.Mutex
+	logs           []protocol.LogIngestRequest
+	sourceAuth     protocol.SourceAuth
+	sourceErr      error
+	sourceCalls    int
+	sourceRevision string
 }
 
 func (m *mockLogTransport) Connect(_ context.Context) error         { return nil }
@@ -49,6 +53,17 @@ func (m *mockLogTransport) FetchDatabaseBootstrap(_ context.Context, _ string) (
 
 func (m *mockLogTransport) FetchRevisionRuntime(_ context.Context, _ string) (protocol.RuntimeBootstrap, error) {
 	return protocol.RuntimeBootstrap{}, nil
+}
+
+func (m *mockLogTransport) FetchSourceAuth(_ context.Context, revisionID string) (protocol.SourceAuth, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sourceCalls++
+	m.sourceRevision = revisionID
+	if m.sourceErr != nil {
+		return protocol.SourceAuth{}, m.sourceErr
+	}
+	return m.sourceAuth, nil
 }
 
 func TestPullImageHandler_MissingImage(t *testing.T) {

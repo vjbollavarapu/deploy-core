@@ -1,15 +1,18 @@
 package orchestrator_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/deploycore/deploy-core/apps/api/internal/deployments"
 	"github.com/deploycore/deploy-core/apps/api/internal/orchestrator"
+	"github.com/deploycore/deploy-core/apps/api/pkg/crypto"
 	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -204,6 +207,12 @@ func TestImageSourceStillPullsAndSkipsFetch(t *testing.T) {
 	if cfg["sourceType"] != "image" || cfg["dockerfilePath"] != "Dockerfile" || cfg["buildContext"] != "." {
 		t.Fatalf("snapshot=%s", snap)
 	}
+	if _, ok := cfg["gitConnectionId"]; ok {
+		t.Fatalf("image snapshot included a git connection: %s", snap)
+	}
+	if _, ok := pull["gitConnectionId"]; ok || pull["repositoryUrl"] != nil {
+		t.Fatalf("image pull changed: %v", pull)
+	}
 }
 
 func TestSecondDeploymentLeavesFailedRevisionUntouched(t *testing.T) {
@@ -253,6 +262,99 @@ func TestSecondDeploymentLeavesFailedRevisionUntouched(t *testing.T) {
 	}
 	if cfg["dockerfilePath"] != "Dockerfile.prod" || cfg["buildContext"] != "apps/backend" {
 		t.Fatalf("r2 snapshot=%s", created)
+	}
+}
+
+func TestPrivateGitSnapshotsConnectionIDWithoutCredential(t *testing.T) {
+	pool := testPool(t)
+	const token = "ghp_orchestrator_must_not_appear"
+	dockerfile := "Dockerfile.prod"
+	contextPath := "apps/backend"
+	orgID, appID, envID, serverID, userID := seedGitApp(t, pool, &dockerfile, &contextPath)
+	key, err := crypto.NormalizePlatformKey([]byte("orchestrator-git-connection-test-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := crypto.Seal(key, "platform:v1", []byte(token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var connectionID uuid.UUID
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO git_connections (
+			organization_id, provider, account_login, display_name,
+			credential_ciphertext, credential_nonce, credential_key_id, status, created_by
+		) VALUES ($1, 'github', 'acme', 'Acme', $2, $3, $4, 'active', $5)
+		RETURNING id`, orgID, env.Ciphertext, env.Nonce, env.KeyID, userID).Scan(&connectionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE application_configs SET git_connection_id = $2 WHERE application_id = $1`, appID, connectionID); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	repo := deployments.NewPostgresRepository(pool)
+	orch := orchestrator.New(pool, repo, log, orchestrator.Config{SimulateAgent: true})
+	created, err := repo.CreateQueued(context.Background(), orgID, appID, envID, &serverID, deployments.TriggerManual, nil, nil, "git-private", userID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Execute(context.Background(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != deployments.StatusRunning || got.TargetRevisionID == nil {
+		t.Fatalf("status=%s", got.Status)
+	}
+
+	var snap, vars, refs []byte
+	if err := pool.QueryRow(context.Background(), `
+		SELECT effective_config, variable_snapshot, secret_refs FROM revisions WHERE id = $1`, *got.TargetRevisionID).
+		Scan(&snap, &vars, &refs); err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(snap, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg["gitConnectionId"] != connectionID.String() || cfg["repositoryUrl"] != "https://github.com/vjbollavarapu/modulyn" {
+		t.Fatalf("snapshot=%s", snap)
+	}
+	if strings.Contains(string(snap), token) || strings.Contains(string(vars), token) || strings.Contains(string(refs), token) {
+		t.Fatal("revision snapshot contained the git token")
+	}
+
+	fetch := payloadFor(t, orch, protocol.OpBuildImage, protocol.BuildPhaseFetchSource)
+	assertExactKeys(t, fetch, []string{"phase", "deploymentId", "applicationId", "revisionId", "repositoryUrl", "gitBranch", "gitConnectionId"})
+	fetchRaw, _ := json.Marshal(fetch)
+	if fetch["gitConnectionId"] != connectionID.String() || strings.Contains(string(fetchRaw), token) {
+		t.Fatalf("fetch=%v", fetch)
+	}
+	build := payloadFor(t, orch, protocol.OpBuildImage, protocol.BuildPhaseBuild)
+	buildRaw, _ := json.Marshal(build)
+	if _, ok := build["gitConnectionId"]; ok || strings.Contains(string(buildRaw), token) {
+		t.Fatalf("build=%v", build)
+	}
+
+	var events string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COALESCE(string_agg(message || metadata::text, ' '), '')
+		FROM deployment_events WHERE deployment_id = $1`, got.ID).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	var commands string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COALESCE(string_agg(payload::text || COALESCE(error_message, '') || COALESCE(result::text, ''), ' '), '')
+		FROM agent_commands WHERE organization_id = $1`, orgID).Scan(&commands); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(events, token) || strings.Contains(commands, token) || strings.Contains(logs.String(), token) {
+		t.Fatal("git token appeared in events, commands, or logs")
 	}
 }
 

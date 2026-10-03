@@ -15,11 +15,16 @@ type secretVersionSource interface {
 	GetByVersion(ctx context.Context, orgID uuid.UUID, scope, name string, version int, projectID, environmentID, applicationID *uuid.UUID) (secrets.Record, error)
 }
 
+type gitCloneCredentialSource interface {
+	ResolveCloneCredential(ctx context.Context, orgID, connectionID uuid.UUID) (username, token string, err error)
+}
+
 type Service struct {
 	repo        Repository
 	authz       *rbac.Authorizer
 	secrets     secretVersionSource
 	platformKey []byte
+	gitCreds    gitCloneCredentialSource
 }
 
 func NewService(repo Repository, authz *rbac.Authorizer) *Service {
@@ -30,6 +35,12 @@ func NewService(repo Repository, authz *rbac.Authorizer) *Service {
 func (s *Service) WithRuntime(source secretVersionSource, platformKey []byte) *Service {
 	s.secrets = source
 	s.platformKey = platformKey
+	return s
+}
+
+// WithSourceAuth enables agent Git clone authentication from git_connections.
+func (s *Service) WithSourceAuth(source gitCloneCredentialSource) *Service {
+	s.gitCreds = source
 	return s
 }
 

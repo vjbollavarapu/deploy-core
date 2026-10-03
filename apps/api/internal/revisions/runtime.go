@@ -57,6 +57,55 @@ func (s *Service) BootstrapForAgent(ctx context.Context, agent agents.Agent, rev
 	return RuntimeConfig{RevisionID: rc.ID, Env: env}, nil
 }
 
+// SourceAuth is the agent-only Git HTTPS credential for a revision.
+// Scheme none means the revision has no git connection. Password must not be logged.
+type SourceAuth struct {
+	RevisionID uuid.UUID
+	Scheme     string
+	Username   string
+	Password   string
+}
+
+// SourceAuthForAgent resolves the git connection pinned on the revision snapshot.
+// It does not accept a client-supplied connection id.
+func (s *Service) SourceAuthForAgent(ctx context.Context, agent agents.Agent, revisionID uuid.UUID) (SourceAuth, error) {
+	rc, err := s.repo.GetRuntimeContext(ctx, revisionID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return SourceAuth{}, apierror.NotFoundCode(apierror.CodeRevisionNotFound, "revision not found")
+		}
+		return SourceAuth{}, err
+	}
+	if rc.OrganizationID != agent.OrganizationID {
+		return SourceAuth{}, apierror.Forbidden("revision is outside agent scope")
+	}
+	if rc.ServerID == nil || *rc.ServerID != agent.ServerID {
+		return SourceAuth{}, apierror.Forbidden("revision is outside agent scope")
+	}
+	raw, _ := rc.EffectiveConfig["gitConnectionId"].(string)
+	connectionID := strings.TrimSpace(raw)
+	if connectionID == "" {
+		return SourceAuth{RevisionID: rc.ID, Scheme: "none"}, nil
+	}
+	parsed, err := uuid.Parse(connectionID)
+	if err != nil {
+		return SourceAuth{}, apierror.Validation("revision git connection is invalid", nil)
+	}
+	if s.gitCreds == nil {
+		return SourceAuth{}, apierror.Internal("git source authentication is not configured")
+	}
+	username, token, err := s.gitCreds.ResolveCloneCredential(ctx, rc.OrganizationID, parsed)
+	if err != nil {
+		return SourceAuth{}, err
+	}
+	return SourceAuth{
+		RevisionID: rc.ID,
+		Scheme:     "basic",
+		Username:   username,
+		Password:   token,
+	}, nil
+}
+
 func (s *Service) secretsFromSnapshot(ctx context.Context, rc RuntimeContext) ([]RuntimeVariable, error) {
 	if len(rc.SecretRefs) == 0 {
 		return nil, nil

@@ -23,6 +23,7 @@ type BuildImagePayload struct {
 	RevisionID        string            `json:"revisionId,omitempty"`
 	RepositoryURL     string            `json:"repositoryUrl,omitempty"`
 	GitBranch         string            `json:"gitBranch,omitempty"`
+	GitConnectionID   string            `json:"gitConnectionId,omitempty"`
 	DockerfilePath    string            `json:"dockerfilePath,omitempty"`
 	ContextPath       string            `json:"contextPath,omitempty"`
 	DockerfileContent string            `json:"dockerfileContent,omitempty"`
@@ -61,8 +62,11 @@ func (p *BuildImagePayload) Validate() error {
 				return err
 			}
 		}
-		return nil
+		return validateGitConnectionID(p.GitConnectionID)
 	case BuildPhaseBuild:
+		if strings.TrimSpace(p.GitConnectionID) != "" {
+			return errors.New("gitConnectionId is not allowed on build")
+		}
 		if err := validateRelativeBuildPath("contextPath", p.ContextPath); err != nil {
 			return err
 		}
@@ -83,6 +87,25 @@ func validateRepositoryURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Scheme, "https") || parsed.User != nil {
 		return errors.New("repositoryUrl must be an https URL without credentials")
+	}
+	return nil
+}
+
+func validateGitConnectionID(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	parts := strings.Split(id, "-")
+	if len(parts) != 5 || len(parts[0]) != 8 || len(parts[1]) != 4 || len(parts[2]) != 4 || len(parts[3]) != 4 || len(parts[4]) != 12 {
+		return errors.New("gitConnectionId is invalid")
+	}
+	for _, part := range parts {
+		for _, c := range part {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+				return errors.New("gitConnectionId is invalid")
+			}
+		}
 	}
 	return nil
 }

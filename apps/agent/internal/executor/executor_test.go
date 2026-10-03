@@ -115,6 +115,10 @@ func (m *mockTransport) FetchRevisionRuntime(_ context.Context, _ string) (proto
 	return protocol.RuntimeBootstrap{}, nil
 }
 
+func (m *mockTransport) FetchSourceAuth(_ context.Context, _ string) (protocol.SourceAuth, error) {
+	return protocol.SourceAuth{}, nil
+}
+
 func (m *mockTransport) PollCommands(ctx context.Context) ([]protocol.CommandEnvelope, error) {
 	m.mu.Lock()
 	if len(m.commands) == 0 {

@@ -44,6 +44,10 @@ type Client interface {
 	// Env values must never be logged by callers.
 	FetchRevisionRuntime(ctx context.Context, revisionID string) (protocol.RuntimeBootstrap, error)
 
+	// FetchSourceAuth loads the current Git HTTPS credential for a revision.
+	// Password must never be logged, stored, or copied into a command result.
+	FetchSourceAuth(ctx context.Context, revisionID string) (protocol.SourceAuth, error)
+
 	// State returns the current connection state channel for reporting.
 	State() <-chan ConnectionState
 

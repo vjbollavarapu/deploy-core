@@ -367,3 +367,28 @@ func (c *HTTPClient) FetchRevisionRuntime(ctx context.Context, revisionID string
 	}
 	return out, nil
 }
+
+// FetchSourceAuth loads Git clone credentials for a revision.
+// Error text never includes the response body.
+func (c *HTTPClient) FetchSourceAuth(ctx context.Context, revisionID string) (protocol.SourceAuth, error) {
+	var out protocol.SourceAuth
+	id := strings.TrimSpace(revisionID)
+	if id == "" {
+		return out, fmt.Errorf("revisionId is required")
+	}
+	path := fmt.Sprintf("/api/v1/agents/revisions/%s/source-auth", id)
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return out, fmt.Errorf("failed to fetch git source auth")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return out, fmt.Errorf("git source auth unexpected status %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return out, fmt.Errorf("failed to decode git source auth")
+	}
+	return out, nil
+}

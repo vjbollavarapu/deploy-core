@@ -45,6 +45,9 @@ func (runtimeTransport) FetchDatabaseBootstrap(context.Context, string) (protoco
 func (m runtimeTransport) FetchRevisionRuntime(context.Context, string) (protocol.RuntimeBootstrap, error) {
 	return m.boot, m.err
 }
+func (runtimeTransport) FetchSourceAuth(context.Context, string) (protocol.SourceAuth, error) {
+	return protocol.SourceAuth{Scheme: protocol.SourceAuthSchemeNone}, nil
+}
 
 func TestDeployRevision_InjectsBootstrapEnvAndHidesValues(t *testing.T) {
 	rev := uuid.New()

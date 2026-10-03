@@ -272,6 +272,11 @@ func (o *Orchestrator) stepFetchingSource(ctx context.Context, d deployments.Dep
 			}
 			payload["repositoryUrl"] = strOr(cfg.RepositoryURL, "")
 			payload["gitBranch"] = strOr(cfg.GitBranch, "")
+			if d.TargetRevisionID != nil {
+				if connectionID := o.snapshottedGitConnectionID(ctx, *d.TargetRevisionID); connectionID != "" {
+					payload["gitConnectionId"] = connectionID
+				}
+			}
 			if _, err := decodeBuildPayload(payload); err != nil {
 				return o.fail(ctx, d, deployments.StatusFetchingSource, deployments.StatusSourceFailed, protocol.ErrInvalidSourcePath, err.Error())
 			}
@@ -890,30 +895,31 @@ func (o *Orchestrator) validateServer(ctx context.Context, d deployments.Deploym
 }
 
 type appConfig struct {
-	SourceType     string
-	RepositoryURL  *string
-	GitBranch      *string
-	DockerfilePath *string
-	BuildContext   *string
-	ImageReference *string
-	InternalPort   *int
-	HealthCheck    map[string]any
-	RuntimeConfig  map[string]any
-	CPULimitMillis *int
-	MemoryLimit    *int64
-	RestartPolicy  string
+	SourceType      string
+	RepositoryURL   *string
+	GitBranch       *string
+	DockerfilePath  *string
+	BuildContext    *string
+	GitConnectionID *uuid.UUID
+	ImageReference  *string
+	InternalPort    *int
+	HealthCheck     map[string]any
+	RuntimeConfig   map[string]any
+	CPULimitMillis  *int
+	MemoryLimit     *int64
+	RestartPolicy   string
 }
 
 func (o *Orchestrator) loadAppConfig(ctx context.Context, appID uuid.UUID) (appConfig, error) {
 	var c appConfig
 	var health, runtime []byte
 	err := o.pool.QueryRow(ctx, `
-		SELECT source_type, repository_url, git_branch, dockerfile_path, build_context, image_reference, internal_port,
+		SELECT source_type, repository_url, git_branch, dockerfile_path, build_context, git_connection_id, image_reference, internal_port,
 		       health_check, runtime_config, cpu_limit_millis, memory_limit_bytes, restart_policy
 		FROM application_configs
 		WHERE application_id = $1
 		ORDER BY version DESC LIMIT 1`, appID).Scan(
-		&c.SourceType, &c.RepositoryURL, &c.GitBranch, &c.DockerfilePath, &c.BuildContext, &c.ImageReference, &c.InternalPort,
+		&c.SourceType, &c.RepositoryURL, &c.GitBranch, &c.DockerfilePath, &c.BuildContext, &c.GitConnectionID, &c.ImageReference, &c.InternalPort,
 		&health, &runtime, &c.CPULimitMillis, &c.MemoryLimit, &c.RestartPolicy,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1006,6 +1012,9 @@ func (o *Orchestrator) buildEffectiveConfig(ctx context.Context, d deployments.D
 		"restartPolicy":  cfg.RestartPolicy,
 		"runtimeConfig":  cfg.RuntimeConfig,
 		"healthCheck":    cfg.HealthCheck,
+	}
+	if cfg.GitConnectionID != nil {
+		eff["gitConnectionId"] = cfg.GitConnectionID.String()
 	}
 	if len(mounts) > 0 {
 		encoded := make([]any, 0, len(mounts))
@@ -1281,6 +1290,19 @@ func strOr(v *string, fallback string) string {
 		return fallback
 	}
 	return *v
+}
+
+func (o *Orchestrator) snapshottedGitConnectionID(ctx context.Context, revisionID uuid.UUID) string {
+	var raw []byte
+	if err := o.pool.QueryRow(ctx, `SELECT effective_config FROM revisions WHERE id = $1`, revisionID).Scan(&raw); err != nil {
+		return ""
+	}
+	var eff map[string]any
+	if err := json.Unmarshal(raw, &eff); err != nil {
+		return ""
+	}
+	id, _ := eff["gitConnectionId"].(string)
+	return strings.TrimSpace(id)
 }
 
 func resolvedBuildPaths(cfg appConfig) (dockerfilePath, contextPath string) {

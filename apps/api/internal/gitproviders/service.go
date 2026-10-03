@@ -255,6 +255,36 @@ func (s *Service) SyncConnection(ctx context.Context, actorID, id uuid.UUID, rep
 	return c, out, nil
 }
 
+// ResolveCloneCredential decrypts the current token for an active GitHub connection
+// in the revision's organization. The token is returned only to the caller and is not logged.
+func (s *Service) ResolveCloneCredential(ctx context.Context, orgID, connectionID uuid.UUID) (username, token string, err error) {
+	conn, sec, err := s.repo.GetConnection(ctx, connectionID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return "", "", apierror.NotFound("git connection not found")
+		}
+		return "", "", err
+	}
+	if conn.OrganizationID != orgID {
+		return "", "", apierror.Forbidden("git connection is outside organization")
+	}
+	if conn.Status != StatusActive {
+		return "", "", apierror.Conflict("git connection is not active")
+	}
+	if conn.Provider != ProviderGitHub {
+		return "", "", apierror.Validation("unsupported git provider", map[string]any{"provider": conn.Provider})
+	}
+	plain, err := crypto.Open(s.cfg.PlatformKey, crypto.Envelope{
+		KeyID:      sec.CredentialKeyID,
+		Nonce:      sec.CredentialNonce,
+		Ciphertext: sec.CredentialCiphertext,
+	})
+	if err != nil {
+		return "", "", apierror.Internal("could not decrypt git credential")
+	}
+	return "x-access-token", string(plain), nil
+}
+
 func (s *Service) ListRepositories(ctx context.Context, actorID, connectionID uuid.UUID, limit, offset int) ([]Repository, int64, error) {
 	c, _, err := s.repo.GetConnection(ctx, connectionID)
 	if err != nil {

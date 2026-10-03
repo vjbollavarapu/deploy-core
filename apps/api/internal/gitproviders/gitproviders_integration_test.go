@@ -12,8 +12,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/deploycore/deploy-core/apps/api/internal/auth"
 	"github.com/deploycore/deploy-core/apps/api/internal/config"
@@ -235,6 +238,159 @@ func TestGitConnectionAndWebhookAutoDeploy(t *testing.T) {
 	if bad.Code != http.StatusUnauthorized {
 		t.Fatalf("bad sig status=%d", bad.Code)
 	}
+}
+
+func TestApplicationPatchAttachesGitConnection(t *testing.T) {
+	pool := testPool(t)
+	srv := testServer(t, pool)
+	const token = "ghp_attach_must_not_enter_application_config"
+
+	ownerTok := register(t, srv, "owner-attach-"+uuid.NewString()+"@example.com", "password123", "Owner")
+	orgID := createOrg(t, srv, ownerTok, "Attach Org", "att-"+uuid.NewString()[:8])
+	projectID := createProject(t, srv, ownerTok, orgID)
+	envID := createEnvironment(t, srv, ownerTok, projectID)
+	serverID := createAttachServer(t, srv, ownerTok, orgID)
+	connID := createAttachConnection(t, srv, ownerTok, orgID, token)
+
+	repoURL := "https://github.com/vjbollavarapu/modulyn"
+	branch := "main"
+	dockerfile := "Dockerfile.prod"
+	contextPath := "apps/backend"
+	created := doJSON(t, srv, http.MethodPost, "/api/v1/applications", mustAttachJSON(map[string]any{
+		"organizationId": orgID, "projectId": projectID, "environmentId": envID,
+		"name": "Modulyn", "slug": "modulyn", "type": "API", "targetServerId": serverID,
+		"config": map[string]any{
+			"sourceType": "git", "repositoryUrl": repoURL, "gitBranch": branch,
+			"dockerfilePath": dockerfile, "buildContext": contextPath, "internalPort": 8080,
+		},
+	}), ownerTok)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	}
+	var createdOut struct {
+		Application struct {
+			ID     string `json:"id"`
+			Config struct {
+				Version int `json:"version"`
+			} `json:"config"`
+		} `json:"application"`
+	}
+	decode(t, created, &createdOut)
+	if createdOut.Application.Config.Version != 1 {
+		t.Fatalf("version=%d", createdOut.Application.Config.Version)
+	}
+
+	patched := doJSON(t, srv, http.MethodPatch, "/api/v1/applications/"+createdOut.Application.ID, mustAttachJSON(map[string]any{
+		"config": map[string]any{
+			"sourceType": "git", "repositoryUrl": repoURL, "gitBranch": branch,
+			"dockerfilePath": dockerfile, "buildContext": contextPath, "internalPort": 8080,
+			"gitConnectionId": connID,
+		},
+	}), ownerTok)
+	if patched.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%s", patched.Code, patched.Body.String())
+	}
+	if strings.Contains(patched.Body.String(), token) {
+		t.Fatal("application update response contained the git token")
+	}
+	var patchedOut struct {
+		Application struct {
+			Config struct {
+				Version         int     `json:"version"`
+				RepositoryURL   *string `json:"repositoryUrl"`
+				GitBranch       *string `json:"gitBranch"`
+				DockerfilePath  *string `json:"dockerfilePath"`
+				BuildContext    *string `json:"buildContext"`
+				GitConnectionID *string `json:"gitConnectionId"`
+			} `json:"config"`
+		} `json:"application"`
+	}
+	decode(t, patched, &patchedOut)
+	cfg := patchedOut.Application.Config
+	if cfg.Version != 2 || cfg.GitConnectionID == nil || *cfg.GitConnectionID != connID {
+		t.Fatalf("patched config=%+v", cfg)
+	}
+	if cfg.RepositoryURL == nil || *cfg.RepositoryURL != repoURL || cfg.GitBranch == nil || *cfg.GitBranch != branch ||
+		cfg.DockerfilePath == nil || *cfg.DockerfilePath != dockerfile || cfg.BuildContext == nil || *cfg.BuildContext != contextPath {
+		t.Fatalf("patched config dropped source fields: %+v", cfg)
+	}
+
+	var v1Conn, v2Conn *string
+	var v1Docker, v2Docker, v1Context, v2Context string
+	rows, err := pool.Query(context.Background(), `
+		SELECT version, dockerfile_path, build_context, git_connection_id::text
+		FROM application_configs WHERE application_id = $1 ORDER BY version`, createdOut.Application.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var version int
+		var docker, build string
+		var connection *string
+		if err := rows.Scan(&version, &docker, &build, &connection); err != nil {
+			t.Fatal(err)
+		}
+		switch version {
+		case 1:
+			v1Conn, v1Docker, v1Context = connection, docker, build
+		case 2:
+			v2Conn, v2Docker, v2Context = connection, docker, build
+		}
+	}
+	if v1Conn != nil || v1Docker != dockerfile || v1Context != contextPath {
+		t.Fatalf("version 1 changed conn=%v docker=%s context=%s", v1Conn, v1Docker, v1Context)
+	}
+	if v2Conn == nil || *v2Conn != connID || v2Docker != dockerfile || v2Context != contextPath {
+		t.Fatalf("version 2 conn=%v docker=%s context=%s", v2Conn, v2Docker, v2Context)
+	}
+}
+
+func createAttachServer(t *testing.T, srv *server.Server, token, orgID string) string {
+	t.Helper()
+	rec := doJSON(t, srv, http.MethodPost, "/api/v1/servers", mustAttachJSON(map[string]any{
+		"organizationId": orgID, "name": "attach-host", "provider": "hetzner",
+		"region": "fsn1", "hostname": "attach-host.local", "architecture": "amd64",
+	}), token)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("server status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Server struct {
+			ID string `json:"id"`
+		} `json:"server"`
+	}
+	decode(t, rec, &out)
+	return out.Server.ID
+}
+
+func createAttachConnection(t *testing.T, srv *server.Server, token, orgID, accessToken string) string {
+	t.Helper()
+	rec := doJSON(t, srv, http.MethodPost, "/api/v1/integrations/git/connections", mustAttachJSON(map[string]any{
+		"organizationId": orgID, "provider": "github", "accountLogin": "acme",
+		"displayName": "Acme", "accessToken": accessToken,
+	}), token)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("connection status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), accessToken) {
+		t.Fatal("connection response contained the access token")
+	}
+	var out struct {
+		Connection struct {
+			ID string `json:"id"`
+		} `json:"connection"`
+	}
+	decode(t, rec, &out)
+	return out.Connection.ID
+}
+
+func mustAttachJSON(v any) []byte {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return raw
 }
 
 func signGitHub(secret string, body []byte) string {

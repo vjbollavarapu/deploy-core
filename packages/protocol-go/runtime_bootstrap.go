@@ -15,3 +15,16 @@ type RuntimeBootstrap struct {
 	RevisionID string            `json:"revisionId"`
 	Env        []RuntimeVariable `json:"env"`
 }
+
+const (
+	SourceAuthSchemeNone  = "none"
+	SourceAuthSchemeBasic = "basic"
+)
+
+// SourceAuth is the agent-only Git clone credential for one revision.
+// Password is plaintext and must never be logged, stored, or copied into a command result.
+type SourceAuth struct {
+	Scheme   string `json:"scheme"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}

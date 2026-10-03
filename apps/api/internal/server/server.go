@@ -223,15 +223,16 @@ func New(cfg config.Config, log *slog.Logger, pool *pgxpool.Pool) *Server {
 		deploySvc := deployments.NewService(deployRepo, authz, auditWriter, log).WithPlacer(serverSvc)
 		deployments.NewHandler(deploySvc, authHandler).Mount(api)
 
-		revRepo := revisions.NewPostgresRepository(pool)
-		revSvc := revisions.NewService(revRepo, authz).WithRuntime(secretRepo, cfg.SecretsPlatformKey)
-		revisions.NewHandler(revSvc, authHandler, agentHandler.RequireAgent).Mount(api)
-
 		gitRepo := gitproviders.NewPostgresRepository(pool)
 		gitSvc := gitproviders.NewService(gitRepo, deployRepo, authz, auditWriter, log, gitproviders.ServiceConfig{
 			PlatformKey: cfg.SecretsPlatformKey,
 			KeyID:       cfg.SecretsKeyID,
 		})
+
+		revRepo := revisions.NewPostgresRepository(pool)
+		revSvc := revisions.NewService(revRepo, authz).WithRuntime(secretRepo, cfg.SecretsPlatformKey).WithSourceAuth(gitSvc)
+		revisions.NewHandler(revSvc, authHandler, agentHandler.RequireAgent).Mount(api)
+
 		gitproviders.NewHandler(gitSvc, authHandler, security.NewRateLimiter(cfg.GitWebhookRateLimitPerMin, time.Minute)).Mount(api)
 
 		registryRepo := registries.NewPostgresRepository(pool)

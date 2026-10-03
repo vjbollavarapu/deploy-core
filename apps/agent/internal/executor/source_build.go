@@ -59,13 +59,13 @@ func buildImageHandlerWith(cli *docker.Client, builder imageBuilder, cloner gitC
 			return ExecutionResult{}, Errorf(ErrCodeInternalError, "workspace manager not initialized")
 		}
 		if p.Phase == protocol.BuildPhaseFetchSource {
-			return fetchBuildSource(ctx, p, cloner, wsMgr, log)
+			return fetchBuildSource(ctx, p, cloner, tr, wsMgr, log)
 		}
 		return buildFetchedSource(ctx, p, cli, builder, tr, wsMgr, log)
 	})
 }
 
-func fetchBuildSource(ctx context.Context, p protocol.BuildImagePayload, cloner gitCloner, wsMgr *workspace.Manager, log *slog.Logger) (ExecutionResult, error) {
+func fetchBuildSource(ctx context.Context, p protocol.BuildImagePayload, cloner gitCloner, tr transport.Client, wsMgr *workspace.Manager, log *slog.Logger) (ExecutionResult, error) {
 	ws, err := wsMgr.Reset(p.DeploymentID)
 	if err != nil {
 		return ExecutionResult{}, Errorf(ErrCodeInvalidSourcePath, "invalid deployment workspace: %v", err)
@@ -94,9 +94,17 @@ func fetchBuildSource(ctx context.Context, p protocol.BuildImagePayload, cloner 
 				slog.String("branch", p.GitBranch),
 			)
 		}
-		commit, err = cloner.Clone(ctx, ws.Dir, p.RepositoryURL, p.GitBranch)
+		auth, err := sourceCloneAuth(ctx, tr, p)
 		if err != nil {
-			return ExecutionResult{}, Errorf(ErrCodeSourceFetchFailed, "%s", SanitizeMessage(err.Error(), p.RepositoryURL))
+			return ExecutionResult{}, err
+		}
+		secret := ""
+		if auth != nil {
+			secret = auth.Password
+		}
+		commit, err = cloner.Clone(ctx, ws.Dir, p.RepositoryURL, p.GitBranch, auth)
+		if err != nil {
+			return ExecutionResult{}, Errorf(ErrCodeSourceFetchFailed, "%s", SanitizeMessage(err.Error(), p.RepositoryURL, secret))
 		}
 	case p.Archive != "":
 		archiveBytes, err := base64.StdEncoding.DecodeString(p.Archive)
@@ -125,6 +133,30 @@ func fetchBuildSource(ctx context.Context, p protocol.BuildImagePayload, cloner 
 		"phase":        protocol.BuildPhaseFetchSource,
 		"commit":       commit,
 	}}, nil
+}
+
+func sourceCloneAuth(ctx context.Context, tr transport.Client, p protocol.BuildImagePayload) (*cloneAuth, error) {
+	if strings.TrimSpace(p.GitConnectionID) == "" {
+		return nil, nil
+	}
+	if tr == nil || strings.TrimSpace(p.RevisionID) == "" {
+		return nil, Errorf(ErrCodeSourceFetchFailed, "git source authentication is unavailable")
+	}
+	authn, err := tr.FetchSourceAuth(ctx, p.RevisionID)
+	if err != nil {
+		return nil, Errorf(ErrCodeSourceFetchFailed, "%s", SanitizeMessage(err.Error(), p.RepositoryURL))
+	}
+	switch authn.Scheme {
+	case "", protocol.SourceAuthSchemeNone:
+		return nil, nil
+	case protocol.SourceAuthSchemeBasic:
+		if strings.TrimSpace(authn.Username) == "" || authn.Password == "" {
+			return nil, Errorf(ErrCodeSourceFetchFailed, "git source authentication is incomplete")
+		}
+		return &cloneAuth{Username: authn.Username, Password: authn.Password}, nil
+	default:
+		return nil, Errorf(ErrCodeSourceFetchFailed, "%s", SanitizeMessage("unsupported git authentication scheme", authn.Password))
+	}
 }
 
 func buildFetchedSource(ctx context.Context, p protocol.BuildImagePayload, cli *docker.Client, builder imageBuilder, tr transport.Client, wsMgr *workspace.Manager, log *slog.Logger) (ExecutionResult, error) {

@@ -28,6 +28,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.Handle("GET /revisions/{revisionId}", h.auth.RequireAuth(http.HandlerFunc(h.Get)))
 	if h.requireAgent != nil {
 		mux.Handle("GET /agents/revisions/{revisionId}/runtime", h.requireAgent(http.HandlerFunc(h.Runtime)))
+		mux.Handle("GET /agents/revisions/{revisionId}/source-auth", h.requireAgent(http.HandlerFunc(h.SourceAuth)))
 	}
 }
 
@@ -124,6 +125,34 @@ func (h *Handler) Runtime(w http.ResponseWriter, r *http.Request) {
 		"revisionId": cfg.RevisionID.String(),
 		"env":        env,
 	})
+}
+
+func (h *Handler) SourceAuth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	agent, ok := agents.AgentFromContext(r.Context())
+	if !ok {
+		writeErr(w, r, apierror.Unauthorized("agent not authenticated"))
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("revisionId"))
+	if err != nil {
+		writeErr(w, r, apierror.Validation("invalid revision id", nil))
+		return
+	}
+	authn, err := h.svc.SourceAuthForAgent(r.Context(), agent, id)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	body := map[string]any{
+		"revisionId": authn.RevisionID.String(),
+		"scheme":     authn.Scheme,
+	}
+	if authn.Scheme == "basic" {
+		body["username"] = authn.Username
+		body["password"] = authn.Password
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func toResponse(rev Revision) revisionResponse {

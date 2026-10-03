@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/deploycore/deploy-core/apps/agent/internal/docker"
 	"github.com/deploycore/deploy-core/apps/agent/internal/workspace"
+	"github.com/deploycore/deploy-core/packages/protocol-go"
 )
 
 type recordingBuilder struct {
@@ -35,15 +38,23 @@ func (r *recordingBuilder) BuildImage(_ context.Context, opts docker.BuildImageO
 }
 
 type scriptedCloner struct {
-	n    int
-	err  error
-	tree map[string]string
+	n       int
+	err     error
+	tree    map[string]string
+	auth    *cloneAuth
+	lastURL string
 }
 
-func (s *scriptedCloner) Clone(_ context.Context, dest, repositoryURL, branch string) (string, error) {
+func (s *scriptedCloner) Clone(_ context.Context, dest, repositoryURL, branch string, auth *cloneAuth) (string, error) {
 	s.n++
+	s.auth = auth
+	s.lastURL = repositoryURL
 	if s.err != nil {
-		return "", errors.New(s.err.Error() + " " + repositoryURL)
+		msg := s.err.Error() + " " + repositoryURL
+		if auth != nil {
+			msg += " " + auth.Password
+		}
+		return "", errors.New(msg)
 	}
 	for rel, content := range s.tree {
 		target := filepath.Join(dest, filepath.FromSlash(rel))
@@ -356,6 +367,120 @@ func TestDockerfileSymlinkInsideWorkspaceIsAllowed(t *testing.T) {
 	}
 	if res.Output["built"] != true || builder.dockerfile != "Dockerfile.prod" {
 		t.Fatalf("built=%v dockerfile=%q", res.Output["built"], builder.dockerfile)
+	}
+}
+
+func TestPublicGitCloneDoesNotRequestSourceAuth(t *testing.T) {
+	dir := t.TempDir()
+	cloner := &scriptedCloner{tree: map[string]string{"Dockerfile": "FROM scratch\n"}}
+	tr := &mockLogTransport{}
+	var logs bytes.Buffer
+	h := buildImageHandlerWith(nil, nil, cloner, tr, workspace.NewManager(dir), slog.New(slog.NewTextHandler(&logs, nil)))
+	res, err := h.Execute(context.Background(), map[string]any{
+		"phase": "fetch_source", "deploymentId": "dep-public", "revisionId": "rev-public",
+		"repositoryUrl": "https://github.com/acme/public", "gitBranch": "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.sourceCalls != 0 {
+		t.Fatalf("source-auth calls=%d", tr.sourceCalls)
+	}
+	if cloner.auth != nil {
+		t.Fatal("public clone received authentication")
+	}
+	if cloner.lastURL != "https://github.com/acme/public" {
+		t.Fatalf("clone url=%s", cloner.lastURL)
+	}
+	if res.Output["sourceReady"] != true || strings.Contains(logs.String(), "x-access-token") {
+		t.Fatalf("result=%v logs=%s", res.Output, logs.String())
+	}
+}
+
+func TestPrivateGitCloneUsesSourceAuthBasic(t *testing.T) {
+	dir := t.TempDir()
+	const token = "ghp_test_private_clone_token_9f3a"
+	cloner := &scriptedCloner{tree: map[string]string{"Dockerfile": "FROM scratch\n"}}
+	tr := &mockLogTransport{sourceAuth: protocol.SourceAuth{
+		Scheme:   protocol.SourceAuthSchemeBasic,
+		Username: "x-access-token",
+		Password: token,
+	}}
+	var logs bytes.Buffer
+	h := buildImageHandlerWith(nil, nil, cloner, tr, workspace.NewManager(dir), slog.New(slog.NewTextHandler(&logs, nil)))
+	res, err := h.Execute(context.Background(), map[string]any{
+		"phase": "fetch_source", "deploymentId": "dep-private", "revisionId": "rev-private",
+		"repositoryUrl": "https://github.com/acme/private", "gitBranch": "main",
+		"gitConnectionId": "11111111-1111-4111-8111-111111111111",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.sourceCalls != 1 || tr.sourceRevision != "rev-private" {
+		t.Fatalf("source-auth calls=%d revision=%s", tr.sourceCalls, tr.sourceRevision)
+	}
+	if cloner.auth == nil || cloner.auth.Username != "x-access-token" || cloner.auth.Password != token {
+		t.Fatal("go-git cloner did not receive GitHub basic auth")
+	}
+	if strings.Contains(cloner.lastURL, token) || strings.Contains(cloner.lastURL, "@") {
+		t.Fatal("clone URL contained credentials")
+	}
+	raw, _ := json.Marshal(res.Output)
+	if strings.Contains(string(raw), token) || strings.Contains(logs.String(), token) {
+		t.Fatal("token appeared in result or logs")
+	}
+	marker, err := os.ReadFile(filepath.Join(dir, "dep-private", ".deploycore-source.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(marker), token) || strings.Contains(string(marker), "x-access-token") {
+		t.Fatalf("marker leaked credential: %s", marker)
+	}
+}
+
+func TestPrivateGitCloneRedactsTokenFromErrors(t *testing.T) {
+	dir := t.TempDir()
+	const token = "ghp_test_private_clone_token_9f3a"
+	cloner := &scriptedCloner{err: errors.New("authentication required")}
+	tr := &mockLogTransport{sourceAuth: protocol.SourceAuth{
+		Scheme:   protocol.SourceAuthSchemeBasic,
+		Username: "x-access-token",
+		Password: token,
+	}}
+	var logs bytes.Buffer
+	h := buildImageHandlerWith(nil, nil, cloner, tr, workspace.NewManager(dir), slog.New(slog.NewTextHandler(&logs, nil)))
+	_, err := h.Execute(context.Background(), map[string]any{
+		"phase": "fetch_source", "deploymentId": "dep-private-err", "revisionId": "rev-private",
+		"repositoryUrl": "https://github.com/acme/private", "gitBranch": "main",
+		"gitConnectionId": "11111111-1111-4111-8111-111111111111",
+	})
+	if err == nil {
+		t.Fatal("expected clone error")
+	}
+	if strings.Contains(err.Error(), token) || strings.Contains(logs.String(), token) {
+		t.Fatalf("token leaked: %v logs=%s", err, logs.String())
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("error was not redacted: %v", err)
+	}
+}
+
+func TestUnsupportedSourceAuthSchemeFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	const token = "ghp_test_private_clone_token_9f3a"
+	cloner := &scriptedCloner{}
+	tr := &mockLogTransport{sourceAuth: protocol.SourceAuth{Scheme: "bearer", Password: token}}
+	h := buildImageHandlerWith(nil, nil, cloner, tr, workspace.NewManager(dir), nil)
+	_, err := h.Execute(context.Background(), map[string]any{
+		"phase": "fetch_source", "deploymentId": "dep-scheme", "revisionId": "rev-scheme",
+		"repositoryUrl": "https://github.com/acme/private", "gitBranch": "main",
+		"gitConnectionId": "11111111-1111-4111-8111-111111111111",
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported git authentication scheme") {
+		t.Fatalf("err=%v", err)
+	}
+	if cloner.n != 0 || strings.Contains(err.Error(), token) {
+		t.Fatalf("clone calls=%d err=%v", cloner.n, err)
 	}
 }
 
