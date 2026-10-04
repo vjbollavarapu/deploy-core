@@ -1,8 +1,8 @@
-import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { ThemeProvider } from '@/components/theme-provider'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { DeployCoreAnalytics } from '@/components/platform/deploycore-analytics'
 import { AuthProvider } from '@/lib/auth-context'
 import './globals.css'
 
@@ -63,7 +63,7 @@ export default function RootLayout({
             <TooltipProvider>{children}</TooltipProvider>
           </AuthProvider>
         </ThemeProvider>
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+        <DeployCoreAnalytics />
       </body>
     </html>
   )

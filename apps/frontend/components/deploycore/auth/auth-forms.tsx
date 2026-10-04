@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { pathAfterLogin } from '@/lib/auth/internal-path'
 import { apiClient, ApiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth-context'
 
@@ -15,7 +16,7 @@ export function LoginForm() {
   const { login } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
-  const nextPath = searchParams.get('next') || '/dashboard'
+  const nextPath = pathAfterLogin(searchParams.get('next'))
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -29,7 +30,7 @@ export function LoginForm() {
     try {
       await login({ email: email.trim(), password })
       toast.success('Signed in')
-      router.replace(nextPath.startsWith('/') ? nextPath : '/dashboard')
+      router.replace(nextPath)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Sign-in failed. Please retry.')
     } finally {

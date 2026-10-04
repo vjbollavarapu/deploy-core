@@ -12,6 +12,10 @@ import {
 import { usePathname, useRouter } from 'next/navigation'
 import { DeployCoreLogo } from '@/components/platform/deploycore-logo'
 import {
+  loginHrefForUnauthenticated,
+  pathAfterLogin,
+} from '@/lib/auth/internal-path'
+import {
   apiClient,
   ApiError,
   clearSessionTokens,
@@ -168,13 +172,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onPublic = isAuthPublicPath(pathname)
 
     if (!user && !onPublic) {
-      const next = pathname && pathname !== '/' ? `?next=${encodeURIComponent(pathname)}` : ''
-      router.replace(`/login${next}`)
+      router.replace(loginHrefForUnauthenticated(window.location.pathname, window.location.search))
       return
     }
 
     if (user && onPublic) {
-      router.replace('/dashboard')
+      const next = new URLSearchParams(window.location.search).get('next')
+      router.replace(pathAfterLogin(next))
     }
   }, [initialized, isLoading, user, pathname, router])
 

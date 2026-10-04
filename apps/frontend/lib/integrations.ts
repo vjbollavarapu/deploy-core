@@ -1,7 +1,5 @@
 import { apiClient, type Page } from '@/lib/api'
 import type {
-  GitProviderConnection,
-  GitProviderType,
   NotificationChannel,
   NotificationChannelType,
   NotificationPolicy,
@@ -11,8 +9,29 @@ import type {
   Webhook,
   WebhookDelivery,
 } from '@/lib/types'
+import {
+  mapWireGitConnection,
+  type BeginGitHubInstallationResponse,
+  type CompleteGitHubInstallationRequest,
+  type CompleteGitHubInstallationResponse,
+  type GitHubAppStatus,
+  type SyncGitConnectionResponse,
+  type WireGitConnection,
+  type WireGitRepository,
+} from '@/lib/github/git-connection'
 
-export const GIT_PROVIDER_TYPES: GitProviderType[] = [
+export {
+  mapWireGitConnection,
+  type BeginGitHubInstallationResponse,
+  type CompleteGitHubInstallationRequest,
+  type CompleteGitHubInstallationResponse,
+  type GitHubAppStatus,
+  type SyncGitConnectionResponse,
+  type WireGitConnection,
+  type WireGitRepository,
+}
+
+export const GIT_PROVIDER_TYPES: Array<'GitHub' | 'GitLab' | 'Bitbucket' | 'Generic Git'> = [
   'GitHub',
   'GitLab',
   'Bitbucket',
@@ -55,81 +74,6 @@ export function isIntegrationConnected(status: string): boolean {
 /* ==========================================================================
    Wire Models & Mappers
    ========================================================================== */
-
-export interface WireGitConnection {
-  id: string
-  organizationId: string
-  provider: string
-  accountLogin: string
-  displayName: string
-  status: string
-  lastSyncAt?: string | null
-  metadata?: Record<string, unknown>
-  createdAt: string
-  updatedAt: string
-  hasWebhookSecret: boolean
-}
-
-export interface WireGitRepository {
-  id: string
-  organizationId: string
-  connectionId: string
-  externalId: string
-  fullName: string
-  defaultBranch: string
-  cloneUrl: string
-  htmlUrl: string
-  metadata?: Record<string, unknown>
-  lastSyncAt?: string | null
-  createdAt: string
-  updatedAt: string
-}
-
-export function mapWireGitConnection(wire: WireGitConnection, repoCount = 0): GitProviderConnection {
-  let providerType: GitProviderType = 'Generic Git'
-  switch (wire.provider.toLowerCase()) {
-    case 'github':
-      providerType = 'GitHub'
-      break
-    case 'gitlab':
-      providerType = 'GitLab'
-      break
-    case 'bitbucket':
-      providerType = 'Bitbucket'
-      break
-    default:
-      providerType = 'Generic Git'
-      break
-  }
-
-  const status: Status =
-    wire.status === 'active'
-      ? 'healthy'
-      : wire.status === 'error'
-        ? 'failed'
-        : wire.status === 'revoked'
-          ? 'stopped'
-          : 'stopped'
-
-  const orgs = Array.isArray(wire.metadata?.organizations)
-    ? (wire.metadata.organizations as string[])
-    : [wire.accountLogin || 'default']
-
-  const perms = Array.isArray(wire.metadata?.permissions)
-    ? (wire.metadata.permissions as string[])
-    : ['read:repo', 'read:org']
-
-  return {
-    id: wire.id,
-    type: providerType,
-    account: wire.accountLogin || wire.displayName || 'Connected Account',
-    organizations: orgs,
-    repositoryCount: repoCount || (wire.metadata?.repositoryCount as number) || 0,
-    status,
-    permissions: perms,
-    lastSync: wire.lastSyncAt ? new Date(wire.lastSyncAt).toLocaleString() : 'Never',
-  }
-}
 
 export interface WireRegistry {
   id: string
@@ -351,12 +295,39 @@ export async function createGitConnection(data: {
   return apiClient.post<WireGitConnection>('/integrations/git/connections', data)
 }
 
-export async function syncGitConnection(connectionId: string) {
-  return apiClient.post<{ message: string; syncedAt: string }>(`/integrations/git/connections/${connectionId}/sync`)
+export async function fetchGitHubAppStatus() {
+  return apiClient.get<GitHubAppStatus>('/integrations/github/app')
 }
 
-export async function fetchGitRepositories(connectionId: string) {
-  return apiClient.get<Page<WireGitRepository>>(`/integrations/git/connections/${connectionId}/repositories`)
+export async function beginGitHubInstallation(organizationId: string) {
+  return apiClient.post<BeginGitHubInstallationResponse>('/integrations/github/installations', {
+    organizationId,
+  })
+}
+
+export async function completeGitHubInstallation(body: CompleteGitHubInstallationRequest) {
+  return apiClient.post<CompleteGitHubInstallationResponse>('/integrations/github/installations/complete', {
+    installationId: body.installationId,
+    setupAction: body.setupAction,
+    state: body.state,
+  })
+}
+
+export async function syncGitConnection(connectionId: string) {
+  return apiClient.post<SyncGitConnectionResponse>(`/integrations/git/connections/${connectionId}/sync`, {})
+}
+
+export async function fetchGitRepositories(
+  connectionId: string,
+  page?: { limit?: number; offset?: number },
+) {
+  const params = new URLSearchParams()
+  if (page?.limit != null) params.set('limit', String(page.limit))
+  if (page?.offset != null) params.set('offset', String(page.offset))
+  const query = params.toString()
+  return apiClient.get<Page<WireGitRepository>>(
+    `/integrations/git/connections/${connectionId}/repositories${query ? `?${query}` : ''}`,
+  )
 }
 
 export async function deleteGitConnection(connectionId: string) {

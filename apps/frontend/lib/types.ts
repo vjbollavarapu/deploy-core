@@ -406,6 +406,12 @@ export interface Registry {
 
 export type GitProviderType = 'GitHub' | 'GitLab' | 'Bitbucket' | 'Generic Git'
 
+export type GitAuthMode = 'pat' | 'github_app'
+
+export type GitAccountType = 'User' | 'Organization' | ''
+
+export type GitRepositorySelection = 'all' | 'selected' | ''
+
 export interface GitProviderConnection {
   id: string
   type: GitProviderType
@@ -415,6 +421,17 @@ export interface GitProviderConnection {
   status: Status
   permissions: string[]
   lastSync: string
+  /** Present on API-mapped rows. Demo fixtures may omit these. */
+  organizationId?: string
+  displayName?: string
+  authMode?: GitAuthMode | string
+  installationId?: number | null
+  accountId?: string
+  accountType?: GitAccountType
+  repositorySelection?: GitRepositorySelection
+  hasWebhookSecret?: boolean
+  /** Backend connection status such as active, error, disabled, or revoked. */
+  providerStatus?: string
 }
 
 export interface EnvVarEntry {
