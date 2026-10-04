@@ -46,6 +46,10 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		DELETE FROM revisions;
 		DELETE FROM deployments;
 		DELETE FROM application_configs;
+		DELETE FROM git_webhook_deliveries;
+		DELETE FROM git_repositories;
+		DELETE FROM git_connections;
+		DELETE FROM github_app_install_states;
 		DELETE FROM applications;
 		DELETE FROM environments;
 		DELETE FROM projects;

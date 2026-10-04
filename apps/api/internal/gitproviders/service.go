@@ -40,6 +40,7 @@ type Service struct {
 	log     *slog.Logger
 	cfg     ServiceConfig
 	now     func() time.Time
+	github  *githubAppBinding
 }
 
 func NewService(repo RepositoryStore, deploys DeploymentQueuer, authz *rbac.Authorizer, auditWriter *audit.Writer, log *slog.Logger, cfg ServiceConfig) *Service {
@@ -229,6 +230,9 @@ func (s *Service) SyncConnection(ctx context.Context, actorID, id uuid.UUID, rep
 	if err := s.authz.RequirePermission(ctx, actorID, c.OrganizationID, rbac.GitConnectionManage); err != nil {
 		return Connection{}, nil, err
 	}
+	if c.AuthMode == AuthModeGitHubApp {
+		return s.syncGitHubAppConnection(ctx, actorID, c, meta)
+	}
 	now := s.now().UTC()
 	var out []Repository
 	for _, in := range repos {
@@ -273,6 +277,9 @@ func (s *Service) ResolveCloneCredential(ctx context.Context, orgID, connectionI
 	}
 	if conn.Provider != ProviderGitHub {
 		return "", "", apierror.Validation("unsupported git provider", map[string]any{"provider": conn.Provider})
+	}
+	if conn.AuthMode == AuthModeGitHubApp {
+		return s.resolveGitHubAppCloneCredential(ctx, conn)
 	}
 	plain, err := crypto.Open(s.cfg.PlatformKey, crypto.Envelope{
 		KeyID:      sec.CredentialKeyID,

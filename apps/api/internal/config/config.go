@@ -2,8 +2,14 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -56,7 +62,88 @@ type Config struct {
 	ReconcileMaxRestartActions  int
 	ReconcileRestartMaxAttempts int
 	ReconcileRestartBackoffBase time.Duration
+
+	GitHubApp GitHubAppConfig
+	// GitHubAPIBaseURL overrides the GitHub API host for tests. Empty uses api.github.com.
+	// It is not loaded from the environment.
+	GitHubAPIBaseURL string
 }
+
+// redactedBytes is PEM material that must not appear in logs, JSON, or fmt output.
+type redactedBytes []byte
+
+func (redactedBytes) Format(f fmt.State, _ rune)   { _, _ = io.WriteString(f, "[redacted]") }
+func (redactedBytes) MarshalJSON() ([]byte, error) { return []byte("null"), nil }
+func (redactedBytes) LogValue() slog.Value         { return slog.StringValue("[redacted]") }
+
+// redactedString is a secret that must not appear in logs, JSON, or fmt output.
+type redactedString string
+
+func (redactedString) Format(f fmt.State, _ rune)   { _, _ = io.WriteString(f, "[redacted]") }
+func (redactedString) MarshalJSON() ([]byte, error) { return []byte("null"), nil }
+func (redactedString) LogValue() slog.Value         { return slog.StringValue("[redacted]") }
+
+// GitHubAppConfig is the process-level GitHub App identity.
+// The private key and webhook secret stay in memory and are never written to PostgreSQL.
+type GitHubAppConfig struct {
+	Configured    bool
+	AppID         string
+	Slug          string
+	SetupBaseURL  string
+	privateKey    redactedBytes
+	webhookSecret redactedString
+}
+
+// GitHubAppPublicStatus is the only GitHub App view safe to return from the API.
+type GitHubAppPublicStatus struct {
+	Configured bool   `json:"configured"`
+	AppID      string `json:"appId,omitempty"`
+	Slug       string `json:"slug,omitempty"`
+}
+
+// PublicStatus reports whether the App is configured, without secrets.
+func (g GitHubAppConfig) PublicStatus() GitHubAppPublicStatus {
+	if !g.Configured {
+		return GitHubAppPublicStatus{}
+	}
+	return GitHubAppPublicStatus{Configured: true, AppID: g.AppID, Slug: g.Slug}
+}
+
+func (g GitHubAppConfig) String() string {
+	return fmt.Sprintf("GitHubAppConfig{configured:%t appId:%s slug:%s}", g.Configured, g.AppID, g.Slug)
+}
+
+func (g GitHubAppConfig) Format(f fmt.State, _ rune) {
+	_, _ = io.WriteString(f, g.String())
+}
+
+func (g GitHubAppConfig) GoString() string { return g.String() }
+
+func (g GitHubAppConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("configured", g.Configured),
+		slog.String("appId", g.AppID),
+		slog.String("slug", g.Slug),
+	)
+}
+
+func (g GitHubAppConfig) MarshalJSON() ([]byte, error) {
+	return json.Marshal(g.PublicStatus())
+}
+
+// PrivateKeyPEM returns the GitHub App private key loaded from disk.
+// Callers must not log or persist it.
+func (g GitHubAppConfig) PrivateKeyPEM() []byte {
+	if len(g.privateKey) == 0 {
+		return nil
+	}
+	out := make([]byte, len(g.privateKey))
+	copy(out, g.privateKey)
+	return out
+}
+
+// WebhookSecret returns the App webhook secret. Callers must not log or persist it.
+func (g GitHubAppConfig) WebhookSecret() string { return string(g.webhookSecret) }
 
 // Load reads configuration from environment variables.
 // Optional .env file is loaded when present (local development).
@@ -132,6 +219,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.SecretsPlatformKey = platformKey
+	githubApp, err := loadGitHubApp(cfg.Env)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.GitHubApp = githubApp
 	if strings.TrimSpace(os.Getenv("ORCHESTRATOR_SIMULATE_AGENT")) == "" && cfg.Env == "production" {
 		cfg.OrchestratorSimulateAgent = false
 	}
@@ -159,6 +251,82 @@ func loadSecretsPlatformKey(env string) ([]byte, error) {
 		return crypto.NormalizePlatformKey([]byte(raw))
 	}
 	return nil, fmt.Errorf("SECRETS_PLATFORM_KEY must be 32 raw bytes or standard base64 of 32 bytes")
+}
+
+var githubAppSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+func loadGitHubApp(env string) (GitHubAppConfig, error) {
+	appID := strings.TrimSpace(os.Getenv("GITHUB_APP_ID"))
+	slug := strings.TrimSpace(os.Getenv("GITHUB_APP_SLUG"))
+	keyFile := strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"))
+	webhook := strings.TrimSpace(os.Getenv("GITHUB_APP_WEBHOOK_SECRET"))
+	setup := strings.TrimRight(strings.TrimSpace(os.Getenv("GITHUB_APP_SETUP_BASE_URL")), "/")
+	if appID == "" && slug == "" && keyFile == "" && webhook == "" && setup == "" {
+		return GitHubAppConfig{}, nil
+	}
+	var missing []string
+	if appID == "" {
+		missing = append(missing, "GITHUB_APP_ID")
+	}
+	if slug == "" {
+		missing = append(missing, "GITHUB_APP_SLUG")
+	}
+	if keyFile == "" {
+		missing = append(missing, "GITHUB_APP_PRIVATE_KEY_FILE")
+	}
+	if webhook == "" {
+		missing = append(missing, "GITHUB_APP_WEBHOOK_SECRET")
+	}
+	if setup == "" {
+		missing = append(missing, "GITHUB_APP_SETUP_BASE_URL")
+	}
+	if len(missing) > 0 {
+		return GitHubAppConfig{}, fmt.Errorf("incomplete GitHub App configuration: %s", strings.Join(missing, ", "))
+	}
+	parsedID, err := strconv.ParseInt(appID, 10, 64)
+	if err != nil || parsedID <= 0 {
+		return GitHubAppConfig{}, fmt.Errorf("GITHUB_APP_ID must be a positive integer")
+	}
+	if !githubAppSlugPattern.MatchString(slug) {
+		return GitHubAppConfig{}, fmt.Errorf("GITHUB_APP_SLUG must be a lowercase GitHub App slug")
+	}
+	if len(webhook) < 8 {
+		return GitHubAppConfig{}, fmt.Errorf("GITHUB_APP_WEBHOOK_SECRET must be at least 8 characters")
+	}
+	parsedURL, err := url.Parse(setup)
+	if err != nil || parsedURL.Host == "" || parsedURL.User != nil || (parsedURL.Scheme != "https" && parsedURL.Scheme != "http") {
+		return GitHubAppConfig{}, fmt.Errorf("GITHUB_APP_SETUP_BASE_URL must be an absolute http(s) URL")
+	}
+	if env == "production" && parsedURL.Scheme != "https" {
+		return GitHubAppConfig{}, fmt.Errorf("GITHUB_APP_SETUP_BASE_URL must use https in production")
+	}
+	key, err := readGitHubAppPrivateKey(keyFile)
+	if err != nil {
+		return GitHubAppConfig{}, err
+	}
+	return GitHubAppConfig{
+		Configured:    true,
+		AppID:         appID,
+		Slug:          slug,
+		SetupBaseURL:  setup,
+		privateKey:    key,
+		webhookSecret: redactedString(webhook),
+	}, nil
+}
+
+func readGitHubAppPrivateKey(path string) ([]byte, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("GITHUB_APP_PRIVATE_KEY_FILE could not be read")
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return nil, fmt.Errorf("GITHUB_APP_PRIVATE_KEY_FILE is empty")
+	}
+	block, _ := pem.Decode(body)
+	if block == nil || !strings.Contains(block.Type, "PRIVATE KEY") {
+		return nil, fmt.Errorf("GITHUB_APP_PRIVATE_KEY_FILE is not a PEM private key")
+	}
+	return body, nil
 }
 
 func getenv(key, fallback string) string {

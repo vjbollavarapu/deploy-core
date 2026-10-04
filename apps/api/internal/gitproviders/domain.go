@@ -21,6 +21,21 @@ const (
 )
 
 const (
+	AuthModePAT       = "pat"
+	AuthModeGitHubApp = "github_app"
+)
+
+const (
+	AccountTypeUser         = "User"
+	AccountTypeOrganization = "Organization"
+)
+
+const (
+	RepositorySelectionAll      = "all"
+	RepositorySelectionSelected = "selected"
+)
+
+const (
 	DeliveryReceived  = "received"
 	DeliveryProcessed = "processed"
 	DeliveryIgnored   = "ignored"
@@ -30,17 +45,22 @@ const (
 
 // Connection is an org-scoped git provider integration (credentials encrypted at rest).
 type Connection struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	Provider       string
-	AccountLogin   string
-	DisplayName    string
-	Status         string
-	LastSyncAt     *time.Time
-	Metadata       map[string]any
-	CreatedBy      *uuid.UUID
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                  uuid.UUID
+	OrganizationID      uuid.UUID
+	Provider            string
+	AuthMode            string
+	InstallationID      *int64
+	AccountID           string
+	AccountType         string
+	RepositorySelection string
+	AccountLogin        string
+	DisplayName         string
+	Status              string
+	LastSyncAt          *time.Time
+	Metadata            map[string]any
+	CreatedBy           *uuid.UUID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 	// HasWebhookSecret is true when a webhook signing secret is configured.
 	HasWebhookSecret bool
 	// WebhookSecretPlain is returned once on create/rotate; never persisted plaintext.

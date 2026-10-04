@@ -13,8 +13,13 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("not found")
-	ErrConflict = errors.New("conflict")
+	ErrNotFound             = errors.New("not found")
+	ErrConflict             = errors.New("conflict")
+	ErrInstallStateNotFound = errors.New("github install state not found")
+	ErrInstallStateExpired  = errors.New("github install state expired")
+	ErrInstallStateConsumed = errors.New("github install state consumed")
+	ErrInstallStateUser     = errors.New("github install state user")
+	ErrInstallStateOrg      = errors.New("github install state organization")
 )
 
 type connectionSecrets struct {
@@ -51,6 +56,16 @@ type RepositoryStore interface {
 	UpdateDelivery(ctx context.Context, id uuid.UUID, status string, deploymentIDs []uuid.UUID, errMsg *string) error
 
 	FindAutoDeployApps(ctx context.Context, orgID uuid.UUID, connectionID *uuid.UUID) ([]autoDeployApp, error)
+
+	InsertInstallState(ctx context.Context, stateHash string, orgID, userID uuid.UUID, expiresAt time.Time) error
+	GetInstallState(ctx context.Context, stateHash string) (installState, error)
+	ConsumeInstallState(ctx context.Context, stateHash string, userID, orgID uuid.UUID, now time.Time) (bool, error)
+
+	FindLiveConnectionByInstallation(ctx context.Context, installationID int64) (Connection, error)
+	CreateGitHubAppConnection(ctx context.Context, c Connection, createdBy uuid.UUID) (Connection, error)
+	UpdateGitHubAppConnection(ctx context.Context, c Connection) (Connection, error)
+	SetConnectionStatus(ctx context.Context, id uuid.UUID, status string) error
+	ReconcileInstallationRepositories(ctx context.Context, orgID, connectionID uuid.UUID, repos []UpsertRepositoryInput, status string, syncedAt time.Time) ([]Repository, error)
 }
 
 type PostgresRepository struct {
@@ -71,7 +86,8 @@ func (r *PostgresRepository) CreateConnection(ctx context.Context, c Connection,
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,'AES-256-GCM',$8,$9,$10,$11,$12,$13,$14)
 		RETURNING id, organization_id, provider, account_login, display_name, status, last_sync_at,
 		          metadata, created_by, created_at, updated_at,
-		          (webhook_secret_ciphertext IS NOT NULL)`
+		          (webhook_secret_ciphertext IS NOT NULL),
+		          auth_mode, installation_id, account_id, account_type, repository_selection`
 	meta, _ := json.Marshal(mapOrEmpty(c.Metadata))
 	out, err := scanConnection(r.pool.QueryRow(ctx, q,
 		c.OrganizationID, c.Provider, c.AccountLogin, c.DisplayName,
@@ -87,6 +103,7 @@ func (r *PostgresRepository) GetConnection(ctx context.Context, id uuid.UUID) (C
 		SELECT id, organization_id, provider, account_login, display_name, status, last_sync_at,
 		       metadata, created_by, created_at, updated_at,
 		       (webhook_secret_ciphertext IS NOT NULL),
+		       auth_mode, installation_id, account_id, account_type, repository_selection,
 		       credential_ciphertext, credential_nonce, credential_key_id,
 		       webhook_secret_ciphertext, webhook_secret_nonce, COALESCE(webhook_secret_key_id, ''),
 		       webhook_secret_hash
@@ -96,10 +113,12 @@ func (r *PostgresRepository) GetConnection(ctx context.Context, id uuid.UUID) (C
 	var meta []byte
 	var sec connectionSecrets
 	var whCT, whNonce []byte
+	var credentialKeyID *string
 	err := r.pool.QueryRow(ctx, q, id).Scan(
 		&c.ID, &c.OrganizationID, &c.Provider, &c.AccountLogin, &c.DisplayName, &c.Status, &c.LastSyncAt,
 		&meta, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.HasWebhookSecret,
-		&sec.CredentialCiphertext, &sec.CredentialNonce, &sec.CredentialKeyID,
+		&c.AuthMode, &c.InstallationID, &c.AccountID, &c.AccountType, &c.RepositorySelection,
+		&sec.CredentialCiphertext, &sec.CredentialNonce, &credentialKeyID,
 		&whCT, &whNonce, &sec.WebhookKeyID, &sec.WebhookSecretHash,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -109,6 +128,9 @@ func (r *PostgresRepository) GetConnection(ctx context.Context, id uuid.UUID) (C
 		return Connection{}, connectionSecrets{}, err
 	}
 	c.Metadata = decodeMap(meta)
+	if credentialKeyID != nil {
+		sec.CredentialKeyID = *credentialKeyID
+	}
 	sec.WebhookCiphertext = whCT
 	sec.WebhookNonce = whNonce
 	return c, sec, nil
@@ -123,7 +145,8 @@ func (r *PostgresRepository) ListConnections(ctx context.Context, orgID uuid.UUI
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, organization_id, provider, account_login, display_name, status, last_sync_at,
 		       metadata, created_by, created_at, updated_at,
-		       (webhook_secret_ciphertext IS NOT NULL)
+		       (webhook_secret_ciphertext IS NOT NULL),
+		       auth_mode, installation_id, account_id, account_type, repository_selection
 		FROM git_connections
 		WHERE organization_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC
@@ -152,7 +175,8 @@ func (r *PostgresRepository) UpdateConnection(ctx context.Context, id uuid.UUID,
 			WHERE id = $1 AND deleted_at IS NULL
 			RETURNING id, organization_id, provider, account_login, display_name, status, last_sync_at,
 			          metadata, created_by, created_at, updated_at,
-			          (webhook_secret_ciphertext IS NOT NULL)`
+			          (webhook_secret_ciphertext IS NOT NULL),
+			          auth_mode, installation_id, account_id, account_type, repository_selection`
 		out, err := scanConnection(r.pool.QueryRow(ctx, q, id, c.AccountLogin, c.DisplayName, c.Status, meta))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Connection{}, ErrNotFound
@@ -172,7 +196,8 @@ func (r *PostgresRepository) UpdateConnection(ctx context.Context, id uuid.UUID,
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING id, organization_id, provider, account_login, display_name, status, last_sync_at,
 		          metadata, created_by, created_at, updated_at,
-		          (webhook_secret_ciphertext IS NOT NULL)`
+		          (webhook_secret_ciphertext IS NOT NULL),
+		          auth_mode, installation_id, account_id, account_type, repository_selection`
 	out, err := scanConnection(r.pool.QueryRow(ctx, q,
 		id, c.AccountLogin, c.DisplayName, c.Status, meta,
 		nullBytes(sec.CredentialCiphertext), nullBytes(sec.CredentialNonce), nullStrPtr(sec.CredentialKeyID),
@@ -325,6 +350,7 @@ func scanConnection(row scannable) (Connection, error) {
 	err := row.Scan(
 		&c.ID, &c.OrganizationID, &c.Provider, &c.AccountLogin, &c.DisplayName, &c.Status, &c.LastSyncAt,
 		&meta, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.HasWebhookSecret,
+		&c.AuthMode, &c.InstallationID, &c.AccountID, &c.AccountType, &c.RepositorySelection,
 	)
 	if err != nil {
 		return Connection{}, err

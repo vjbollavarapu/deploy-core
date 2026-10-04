@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/deploycore/deploy-core/apps/api/internal/auth"
+	"github.com/deploycore/deploy-core/apps/api/internal/config"
 	"github.com/deploycore/deploy-core/apps/api/internal/security"
 	"github.com/deploycore/deploy-core/apps/api/pkg/apierror"
 	"github.com/deploycore/deploy-core/apps/api/pkg/pagination"
@@ -17,9 +18,10 @@ import (
 )
 
 type Handler struct {
-	svc     *Service
-	auth    *auth.Handler
-	limiter *security.RateLimiter
+	svc       *Service
+	auth      *auth.Handler
+	limiter   *security.RateLimiter
+	githubApp config.GitHubAppPublicStatus
 }
 
 func NewHandler(svc *Service, authHandler *auth.Handler, limiter *security.RateLimiter) *Handler {
@@ -27,6 +29,13 @@ func NewHandler(svc *Service, authHandler *auth.Handler, limiter *security.RateL
 		limiter = security.NewRateLimiter(120, time.Minute)
 	}
 	return &Handler{svc: svc, auth: authHandler, limiter: limiter}
+}
+
+// WithGitHubAppStatus records whether the process has a GitHub App configured.
+// The status contains no private key, webhook secret, or JWT.
+func (h *Handler) WithGitHubAppStatus(status config.GitHubAppPublicStatus) *Handler {
+	h.githubApp = status
+	return h
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
@@ -37,6 +46,9 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.Handle("DELETE /integrations/git/connections/{connectionId}", h.auth.RequireAuth(http.HandlerFunc(h.DeleteConnection)))
 	mux.Handle("POST /integrations/git/connections/{connectionId}/sync", h.auth.RequireAuth(http.HandlerFunc(h.SyncConnection)))
 	mux.Handle("GET /integrations/git/connections/{connectionId}/repositories", h.auth.RequireAuth(http.HandlerFunc(h.ListRepositories)))
+	mux.Handle("GET /integrations/github/app", h.auth.RequireAuth(http.HandlerFunc(h.GitHubAppStatus)))
+	mux.Handle("POST /integrations/github/installations", h.auth.RequireAuth(http.HandlerFunc(h.BeginGitHubInstallation)))
+	mux.Handle("POST /integrations/github/installations/complete", h.auth.RequireAuth(http.HandlerFunc(h.CompleteGitHubInstallation)))
 	// Public webhook receiver — authenticated via provider signature.
 	mux.HandleFunc("POST /webhooks/git/{connectionId}", h.Webhook)
 }
@@ -74,20 +86,25 @@ type repoUpsertRequest struct {
 }
 
 type connectionResponse struct {
-	ID               string         `json:"id"`
-	OrganizationID   string         `json:"organizationId"`
-	Provider         string         `json:"provider"`
-	AccountLogin     string         `json:"accountLogin"`
-	DisplayName      string         `json:"displayName"`
-	Status           string         `json:"status"`
-	LastSyncAt       *string        `json:"lastSyncAt,omitempty"`
-	HasWebhookSecret bool           `json:"hasWebhookSecret"`
-	WebhookSecret    *string        `json:"webhookSecret,omitempty"`
-	WebhookURLHint   string         `json:"webhookUrlHint,omitempty"`
-	Metadata         map[string]any `json:"metadata"`
-	CreatedBy        *string        `json:"createdBy,omitempty"`
-	CreatedAt        string         `json:"createdAt"`
-	UpdatedAt        string         `json:"updatedAt"`
+	ID                  string         `json:"id"`
+	OrganizationID      string         `json:"organizationId"`
+	Provider            string         `json:"provider"`
+	AccountLogin        string         `json:"accountLogin"`
+	DisplayName         string         `json:"displayName"`
+	Status              string         `json:"status"`
+	LastSyncAt          *string        `json:"lastSyncAt,omitempty"`
+	AuthMode            string         `json:"authMode"`
+	InstallationID      *int64         `json:"installationId,omitempty"`
+	AccountID           string         `json:"accountId,omitempty"`
+	AccountType         string         `json:"accountType,omitempty"`
+	RepositorySelection string         `json:"repositorySelection,omitempty"`
+	HasWebhookSecret    bool           `json:"hasWebhookSecret"`
+	WebhookSecret       *string        `json:"webhookSecret,omitempty"`
+	WebhookURLHint      string         `json:"webhookUrlHint,omitempty"`
+	Metadata            map[string]any `json:"metadata"`
+	CreatedBy           *string        `json:"createdBy,omitempty"`
+	CreatedAt           string         `json:"createdAt"`
+	UpdatedAt           string         `json:"updatedAt"`
 }
 
 type repositoryResponse struct {
@@ -103,6 +120,77 @@ type repositoryResponse struct {
 	LastSyncAt     *string        `json:"lastSyncAt,omitempty"`
 	CreatedAt      string         `json:"createdAt"`
 	UpdatedAt      string         `json:"updatedAt"`
+}
+
+func (h *Handler) GitHubAppStatus(w http.ResponseWriter, r *http.Request) {
+	if _, ok := auth.UserFromContext(r.Context()); !ok {
+		writeErr(w, r, apierror.Unauthorized("not authenticated"))
+		return
+	}
+	writeJSON(w, http.StatusOK, h.githubApp)
+}
+
+type beginInstallRequest struct {
+	OrganizationID string `json:"organizationId"`
+}
+
+type completeInstallRequest struct {
+	InstallationID int64  `json:"installationId"`
+	SetupAction    string `json:"setupAction"`
+	State          string `json:"state"`
+}
+
+func (h *Handler) BeginGitHubInstallation(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		writeErr(w, r, apierror.Unauthorized("not authenticated"))
+		return
+	}
+	var req beginInstallRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	orgID, err := uuid.Parse(req.OrganizationID)
+	if err != nil {
+		writeErr(w, r, apierror.Validation("organizationId is required", nil))
+		return
+	}
+	result, err := h.svc.BeginGitHubInstallation(r.Context(), user.ID, orgID, auditMeta(r))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"installationUrl": result.InstallationURL,
+		"expiresAt":       result.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (h *Handler) CompleteGitHubInstallation(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		writeErr(w, r, apierror.Unauthorized("not authenticated"))
+		return
+	}
+	var req completeInstallRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	conn, count, err := h.svc.CompleteGitHubInstallation(r.Context(), user.ID, CompleteInstallInput{
+		InstallationID: req.InstallationID,
+		SetupAction:    req.SetupAction,
+		State:          req.State,
+	}, auditMeta(r))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"connection":      toConnectionResponse(conn),
+		"repositoryCount": count,
+	})
 }
 
 func (h *Handler) CreateConnection(w http.ResponseWriter, r *http.Request) {
@@ -312,18 +400,23 @@ func actorAndConnection(r *http.Request) (auth.User, uuid.UUID, error) {
 
 func toConnectionResponse(c Connection) connectionResponse {
 	out := connectionResponse{
-		ID:               c.ID.String(),
-		OrganizationID:   c.OrganizationID.String(),
-		Provider:         c.Provider,
-		AccountLogin:     c.AccountLogin,
-		DisplayName:      c.DisplayName,
-		Status:           c.Status,
-		HasWebhookSecret: c.HasWebhookSecret,
-		WebhookSecret:    c.WebhookSecretPlain,
-		WebhookURLHint:   "/api/v1/webhooks/git/" + c.ID.String(),
-		Metadata:         mapOrEmpty(c.Metadata),
-		CreatedAt:        c.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:        c.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		ID:                  c.ID.String(),
+		OrganizationID:      c.OrganizationID.String(),
+		Provider:            c.Provider,
+		AuthMode:            c.AuthMode,
+		InstallationID:      c.InstallationID,
+		AccountID:           c.AccountID,
+		AccountType:         c.AccountType,
+		RepositorySelection: c.RepositorySelection,
+		AccountLogin:        c.AccountLogin,
+		DisplayName:         c.DisplayName,
+		Status:              c.Status,
+		HasWebhookSecret:    c.HasWebhookSecret,
+		WebhookSecret:       c.WebhookSecretPlain,
+		WebhookURLHint:      "/api/v1/webhooks/git/" + c.ID.String(),
+		Metadata:            mapOrEmpty(c.Metadata),
+		CreatedAt:           c.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:           c.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if c.LastSyncAt != nil {
 		s := c.LastSyncAt.UTC().Format(time.RFC3339Nano)

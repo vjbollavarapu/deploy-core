@@ -62,6 +62,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		DELETE FROM servers;
 		UPDATE git_connections SET deleted_at = NOW() WHERE deleted_at IS NULL;
 		DELETE FROM git_connections;
+		DELETE FROM github_app_install_states;
 		DELETE FROM organization_invitation_roles;
 		DELETE FROM organization_invitations;
 		DELETE FROM member_roles;
