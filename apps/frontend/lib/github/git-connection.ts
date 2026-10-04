@@ -77,10 +77,11 @@ export interface SyncGitConnectionResponse {
   repositories: WireGitRepository[]
 }
 
-export function mapWireGitConnection(wire: WireGitConnection, repoCount = 0): GitProviderConnection {
+export function mapWireGitConnection(wire: WireGitConnection, repoCount?: number): GitProviderConnection {
   const authMode = normalizeAuthMode(wire.authMode)
   const githubApp = authMode === 'github_app'
   const explicitPermissions = stringList(wire.metadata?.permissions)
+  const counted = countedRepositories(githubApp, repoCount, wire.metadata?.repositoryCount)
 
   return {
     id: wire.id,
@@ -89,9 +90,8 @@ export function mapWireGitConnection(wire: WireGitConnection, repoCount = 0): Gi
     organizations: stringList(wire.metadata?.organizations).length > 0
       ? stringList(wire.metadata?.organizations)
       : [wire.accountLogin || 'default'],
-    repositoryCount: githubApp
-      ? nonNegativeCount(repoCount)
-      : nonNegativeCount(repoCount) || numericMetadata(wire.metadata?.repositoryCount),
+    repositoryCount: counted.count,
+    repositoryCountKnown: counted.known,
     status: connectionStatus(wire.status),
     permissions: githubApp ? [] : explicitPermissions.length > 0 ? explicitPermissions : ['read:repo', 'read:org'],
     lastSync: wire.lastSyncAt ? new Date(wire.lastSyncAt).toLocaleString() : 'Never',
@@ -157,6 +157,23 @@ function numericMetadata(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
 }
 
-function nonNegativeCount(value: number): number {
-  return Number.isFinite(value) && value > 0 ? value : 0
+/**
+ * GitHub App counts come only from an explicit total. Metadata is not a count.
+ * PAT rows keep the metadata fallback when no positive explicit count is passed.
+ */
+function countedRepositories(
+  githubApp: boolean,
+  repoCount: number | undefined,
+  metadataCount: unknown,
+): { count: number; known: boolean } {
+  if (githubApp) {
+    if (typeof repoCount === 'number' && Number.isFinite(repoCount) && repoCount >= 0) {
+      return { count: Math.floor(repoCount), known: true }
+    }
+    return { count: 0, known: false }
+  }
+  if (typeof repoCount === 'number' && Number.isFinite(repoCount) && repoCount > 0) {
+    return { count: Math.floor(repoCount), known: true }
+  }
+  return { count: numericMetadata(metadataCount), known: true }
 }

@@ -418,6 +418,11 @@ export interface GitProviderConnection {
   account: string
   organizations: string[]
   repositoryCount: number
+  /**
+   * False when a GitHub App row does not yet have a list totalCount.
+   * Omitted or true means repositoryCount may be shown.
+   */
+  repositoryCountKnown?: boolean
   status: Status
   permissions: string[]
   lastSync: string

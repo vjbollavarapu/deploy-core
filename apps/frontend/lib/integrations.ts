@@ -19,6 +19,7 @@ import {
   type WireGitConnection,
   type WireGitRepository,
 } from '@/lib/github/git-connection'
+import { beginGitHubInstallationRequest, gitConnectionSyncRequest } from '@/lib/github/providers'
 
 export {
   mapWireGitConnection,
@@ -300,9 +301,8 @@ export async function fetchGitHubAppStatus() {
 }
 
 export async function beginGitHubInstallation(organizationId: string) {
-  return apiClient.post<BeginGitHubInstallationResponse>('/integrations/github/installations', {
-    organizationId,
-  })
+  const request = beginGitHubInstallationRequest(organizationId)
+  return apiClient.post<BeginGitHubInstallationResponse>(request.path, request.body)
 }
 
 export async function completeGitHubInstallation(body: CompleteGitHubInstallationRequest) {
@@ -314,7 +314,8 @@ export async function completeGitHubInstallation(body: CompleteGitHubInstallatio
 }
 
 export async function syncGitConnection(connectionId: string) {
-  return apiClient.post<SyncGitConnectionResponse>(`/integrations/git/connections/${connectionId}/sync`, {})
+  const request = gitConnectionSyncRequest(connectionId)
+  return apiClient.post<SyncGitConnectionResponse>(request.path, request.body)
 }
 
 export async function fetchGitRepositories(

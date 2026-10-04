@@ -28,6 +28,7 @@ describe('mapWireGitConnection', () => {
     )
     assert.equal(mapped.authMode, 'pat')
     assert.equal(mapped.repositoryCount, 4)
+    assert.equal(mapped.repositoryCountKnown, true)
     assert.deepEqual(mapped.permissions, ['read:repo', 'read:org'])
     assert.deepEqual(mapped.organizations, ['acme'])
     assert.equal(mapped.accountType, '')
@@ -54,6 +55,7 @@ describe('mapWireGitConnection', () => {
     assert.equal(mapped.accountType, 'Organization')
     assert.equal(mapped.repositorySelection, 'selected')
     assert.equal(mapped.repositoryCount, 0)
+    assert.equal(mapped.repositoryCountKnown, false)
     assert.deepEqual(mapped.permissions, [])
     assert.equal(mapped.providerStatus, 'disabled')
     assert.equal('webhookSecret' in mapped, false)
@@ -65,5 +67,6 @@ describe('mapWireGitConnection', () => {
       3,
     )
     assert.equal(mapped.repositoryCount, 3)
+    assert.equal(mapped.repositoryCountKnown, true)
   })
 })
