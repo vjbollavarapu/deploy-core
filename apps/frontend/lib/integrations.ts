@@ -19,6 +19,7 @@ import {
   type WireGitConnection,
   type WireGitRepository,
 } from '@/lib/github/git-connection'
+import { gitConnectionListRequest } from '@/lib/applications/git-source'
 import { beginGitHubInstallationRequest, gitConnectionSyncRequest } from '@/lib/github/providers'
 
 export {
@@ -281,8 +282,12 @@ export function mapWireWebhook(wire: WireWebhook, deliveries: WebhookDelivery[] 
    ========================================================================== */
 
 // Git connections
-export async function fetchGitConnections(organizationId: string) {
-  return apiClient.get<Page<WireGitConnection>>(`/integrations/git/connections?organizationId=${organizationId}`)
+export async function fetchGitConnections(
+  organizationId: string,
+  page?: { limit?: number; offset?: number },
+) {
+  const request = gitConnectionListRequest(organizationId, page)
+  return apiClient.get<Page<WireGitConnection>>(request.path)
 }
 
 export async function createGitConnection(data: {
