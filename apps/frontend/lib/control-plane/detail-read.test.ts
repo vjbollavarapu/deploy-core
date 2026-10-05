@@ -13,6 +13,7 @@ import {
   mapRevisionSummary,
   loadDeploymentDetail,
   loadProductionApplication,
+  mapWireApplication,
   loadProductionApplicationDeployments,
   loadProductionDeployment,
   loadProductionVariables,
@@ -332,5 +333,97 @@ describe('production deployment detail', () => {
     const failed = await loadProductionDeployment(down, DEPLOYMENT_ID)
     assert.equal(failed.kind, 'error')
     if (failed.kind === 'error') assert.equal(failed.message, 'network down')
+  })
+})
+
+describe('production application source mapping', () => {
+  it('keeps a connected Git config without inferring source type', () => {
+    const healthCheck = { path: '/health', port: 8080 }
+    const runtimeConfig = { desiredReplicas: 2, env: { MODE: 'prod' } }
+    const mapped = mapWireApplication({
+      id: APP_ID,
+      type: 'DOCKER_IMAGE',
+      config: {
+        sourceType: 'git',
+        repositoryUrl: 'https://github.com/acme/app.git',
+        gitBranch: 'release',
+        dockerfilePath: 'deploy/Dockerfile',
+        buildContext: 'services/api',
+        imageReference: 'ghcr.io/acme/app:1',
+        gitConnectionId: '550e8400-e29b-41d4-a716-446655440000',
+        internalPort: 8080,
+        command: 'node server.js',
+        entrypoint: '/entrypoint.sh',
+        cpuLimitMillis: 500,
+        memoryLimitBytes: 268435456,
+        restartPolicy: 'on-failure',
+        healthCheck,
+        runtimeConfig,
+      },
+    })
+    assert.equal(mapped.sourceType, 'git')
+    assert.equal(mapped.gitConnectionId, '550e8400-e29b-41d4-a716-446655440000')
+    assert.equal(mapped.dockerfilePath, 'deploy/Dockerfile')
+    assert.equal(mapped.buildContext, 'services/api')
+    assert.equal(mapped.repositoryUrl, 'https://github.com/acme/app.git')
+    assert.equal(mapped.gitBranch, 'release')
+    assert.equal(mapped.imageReference, 'ghcr.io/acme/app:1')
+    assert.equal(mapped.internalPort, 8080)
+    assert.equal(mapped.command, 'node server.js')
+    assert.equal(mapped.entrypoint, '/entrypoint.sh')
+    assert.equal(mapped.restartPolicy, 'on-failure')
+    assert.deepEqual(mapped.healthCheck, healthCheck)
+    assert.deepEqual(mapped.runtimeConfig, runtimeConfig)
+    assert.equal(mapped.desiredReplicas, 2)
+    assert.notEqual(mapped.healthCheck, healthCheck)
+  })
+
+  it('maps public Git without a connection id', () => {
+    const mapped = mapWireApplication({
+      id: APP_ID,
+      config: {
+        sourceType: 'git',
+        repositoryUrl: 'https://github.com/acme/public.git',
+        gitBranch: 'main',
+        dockerfilePath: 'Dockerfile',
+        buildContext: '.',
+      },
+    })
+    assert.equal(mapped.sourceType, 'git')
+    assert.equal(mapped.gitConnectionId, null)
+    assert.equal(mapped.repositoryUrl, 'https://github.com/acme/public.git')
+    assert.equal(mapped.dockerfilePath, 'Dockerfile')
+    assert.equal(mapped.buildContext, '.')
+    assert.equal(mapped.imageReference, null)
+  })
+
+  it('preserves an image source and leaves omitted fields null', () => {
+    const mapped = mapWireApplication({
+      id: APP_ID,
+      type: 'DOCKER_IMAGE',
+      config: {
+        sourceType: 'image',
+        imageReference: 'ghcr.io/acme/app:2',
+      },
+    })
+    assert.equal(mapped.sourceType, 'image')
+    assert.equal(mapped.imageReference, 'ghcr.io/acme/app:2')
+    assert.equal(mapped.repositoryUrl, null)
+    assert.equal(mapped.gitBranch, null)
+    assert.equal(mapped.dockerfilePath, null)
+    assert.equal(mapped.buildContext, null)
+    assert.equal(mapped.gitConnectionId, null)
+    assert.equal(mapped.internalPort, null)
+    assert.equal(mapped.command, null)
+    assert.equal(mapped.entrypoint, null)
+    assert.equal(mapped.restartPolicy, null)
+    assert.equal(mapped.healthCheck, null)
+    assert.equal(mapped.runtimeConfig, null)
+  })
+
+  it('does not invent sourceType when the backend omits it', () => {
+    const mapped = mapWireApplication({ id: APP_ID, type: 'DOCKER_IMAGE', config: {} })
+    assert.equal(mapped.sourceType, null)
+    assert.equal(mapped.gitConnectionId, null)
   })
 })

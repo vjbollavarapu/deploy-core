@@ -10,13 +10,21 @@ export type LoadResult<T> =
   | { kind: 'error'; message: string }
 
 export interface WireApplicationConfig {
-  sourceType?: string
+  sourceType?: string | null
   repositoryUrl?: string | null
   gitBranch?: string | null
+  dockerfilePath?: string | null
+  buildContext?: string | null
   imageReference?: string | null
+  gitConnectionId?: string | null
+  internalPort?: number | null
+  command?: string | null
+  entrypoint?: string | null
   cpuLimitMillis?: number | null
   memoryLimitBytes?: number | null
-  runtimeConfig?: Record<string, unknown>
+  restartPolicy?: string | null
+  healthCheck?: Record<string, unknown> | null
+  runtimeConfig?: Record<string, unknown> | null
 }
 
 export interface WireApplicationDetail {
@@ -45,11 +53,21 @@ export interface ApplicationDetail {
   environmentName: string | null
   serverId: string | null
   serverName: string | null
+  sourceType: string | null
   repositoryUrl: string | null
   gitBranch: string | null
+  dockerfilePath: string | null
+  buildContext: string | null
   imageReference: string | null
+  gitConnectionId: string | null
+  internalPort: number | null
+  command: string | null
+  entrypoint: string | null
   cpuLimitMillis: number | null
   memoryLimitBytes: number | null
+  restartPolicy: string | null
+  healthCheck: Record<string, unknown> | null
+  runtimeConfig: Record<string, unknown> | null
   desiredReplicas: number | null
 }
 
@@ -311,13 +329,28 @@ export function mapWireApplication(
     environmentName: textOrNull(names?.environmentName),
     serverId: textOrNull(wire.targetServerId),
     serverName: textOrNull(names?.serverName),
+    sourceType: textOrNull(wire.config?.sourceType),
     repositoryUrl: textOrNull(wire.config?.repositoryUrl),
     gitBranch: textOrNull(wire.config?.gitBranch),
+    dockerfilePath: textOrNull(wire.config?.dockerfilePath),
+    buildContext: textOrNull(wire.config?.buildContext),
     imageReference: textOrNull(wire.config?.imageReference),
+    gitConnectionId: textOrNull(wire.config?.gitConnectionId),
+    internalPort: numberOrNull(wire.config?.internalPort),
+    command: textOrNull(wire.config?.command),
+    entrypoint: textOrNull(wire.config?.entrypoint),
     cpuLimitMillis: numberOrNull(wire.config?.cpuLimitMillis),
     memoryLimitBytes: numberOrNull(wire.config?.memoryLimitBytes),
+    restartPolicy: textOrNull(wire.config?.restartPolicy),
+    healthCheck: copyRecord(wire.config?.healthCheck),
+    runtimeConfig: copyRecord(wire.config?.runtimeConfig),
     desiredReplicas: desiredReplicas(wire.config),
   }
+}
+
+function copyRecord(value: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null
+  return structuredClone(value)
 }
 
 function durationBetween(startedAt: string | null, finishedAt: string | null): string | null {

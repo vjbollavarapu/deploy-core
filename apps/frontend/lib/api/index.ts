@@ -19,6 +19,7 @@ export type {
   APIError,
   Application,
   ApplicationConfigInput,
+  UpdateApplicationConfigRequest,
   ApplicationType,
   AuthResult,
   ConfigScope,

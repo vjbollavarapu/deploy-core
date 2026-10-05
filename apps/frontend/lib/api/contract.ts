@@ -151,6 +151,15 @@ export interface ApplicationConfigInput {
   desiredReplicas?: number
 }
 
+/**
+ * Application config body for PATCH /applications/{id}.
+ * clearGitConnection is request-only. GET config does not return it.
+ * Omitting gitConnectionId preserves the stored connection; clearGitConnection removes it.
+ */
+export interface UpdateApplicationConfigRequest extends ApplicationConfigInput {
+  clearGitConnection?: boolean
+}
+
 export interface CreateApplicationRequest {
   organizationId: UUID
   projectId: UUID
