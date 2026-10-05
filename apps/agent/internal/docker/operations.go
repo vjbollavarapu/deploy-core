@@ -233,7 +233,24 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (ContainerDeta
 		IPAddress:    ipAddress,
 		Networks:     networks,
 		Aliases:      aliases,
+		HealthCheck:  healthCheckFromContainer(info.Config),
 	}, nil
+}
+
+// healthCheckFromContainer copies Docker HEALTHCHECK timings as time.Duration
+// values. The engine client already decodes those fields from nanoseconds.
+func healthCheckFromContainer(cfg *container.Config) *HealthCheckConfig {
+	if cfg == nil || cfg.Healthcheck == nil {
+		return nil
+	}
+	src := cfg.Healthcheck
+	return &HealthCheckConfig{
+		Test:        append([]string(nil), src.Test...),
+		Interval:    src.Interval,
+		Timeout:     src.Timeout,
+		StartPeriod: src.StartPeriod,
+		Retries:     src.Retries,
+	}
 }
 
 // CreateContainer validates and creates a container according to the full security policy.

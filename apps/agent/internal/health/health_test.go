@@ -17,9 +17,15 @@ import (
 type mockHealthClient struct {
 	containers map[string]docker.ContainerDetail
 	execFn     func(id string, cmd []string) (docker.ExecResult, error)
+	inspectFn  func(id string) (docker.ContainerDetail, error)
+	inspects   int
 }
 
 func (m *mockHealthClient) InspectContainer(ctx context.Context, id string) (docker.ContainerDetail, error) {
+	m.inspects++
+	if m.inspectFn != nil {
+		return m.inspectFn(id)
+	}
 	if c, ok := m.containers[id]; ok {
 		return c, nil
 	}
@@ -196,6 +202,19 @@ func TestContainerStateProbe(t *testing.T) {
 					ExitCode: 1,
 				},
 			},
+			"running-docker-starting": {
+				ID: "running-docker-starting",
+				State: docker.ContainerState{
+					Running: true,
+					Health:  &docker.ContainerHealth{Status: "starting"},
+				},
+				HealthCheck: &docker.HealthCheckConfig{
+					Interval:    30 * time.Second,
+					Timeout:     5 * time.Second,
+					StartPeriod: 20 * time.Second,
+					Retries:     3,
+				},
+			},
 		},
 	}
 
@@ -229,6 +248,12 @@ func TestContainerStateProbe(t *testing.T) {
 	obs = probeContainerState(ctx, mock, "exited-container")
 	if obs.Success {
 		t.Fatalf("expected exited container failure, got success")
+	}
+
+	// 6. Docker starting is pending, not a failed probe.
+	obs = probeContainerState(ctx, mock, "running-docker-starting")
+	if obs.Success || !obs.Pending {
+		t.Fatalf("expected docker starting to be pending, got %+v", obs)
 	}
 }
 
@@ -305,5 +330,239 @@ func TestExecute_FailureThreshold(t *testing.T) {
 	}
 	if res.ConsecutiveFailures != 2 {
 		t.Errorf("expected consecutive failures = 2, got %d", res.ConsecutiveFailures)
+	}
+}
+
+func TestDockerStartingBudget(t *testing.T) {
+	got := dockerStartingBudget(&docker.HealthCheckConfig{
+		Interval:    30 * time.Second,
+		Timeout:     5 * time.Second,
+		StartPeriod: 20 * time.Second,
+		Retries:     3,
+	})
+	// StartPeriod + retries*(interval+timeout) + one interval of margin.
+	if got != 155*time.Second {
+		t.Fatalf("budget = %s", got)
+	}
+	if got := dockerStartingBudget(nil); got != 210*time.Second {
+		t.Fatalf("nil config budget = %s", got)
+	}
+	if got := dockerStartingBudget(&docker.HealthCheckConfig{}); got != 210*time.Second {
+		t.Fatalf("zero config budget = %s", got)
+	}
+	if got := dockerStartingBudget(&docker.HealthCheckConfig{StartPeriod: 24 * time.Hour}); got != maxDockerStartingBudget {
+		t.Fatalf("capped budget = %s", got)
+	}
+}
+
+func TestExecute_DockerStartingDoesNotCountAsFailure(t *testing.T) {
+	mock := &mockHealthClient{
+		inspectFn: func(id string) (docker.ContainerDetail, error) {
+			return startingDetail(shortStartingHealth()), nil
+		},
+	}
+	cfg := Config{
+		ProbeType:        TypeDocker,
+		Interval:         time.Millisecond,
+		Timeout:          time.Second,
+		FailureThreshold: 3,
+		SuccessThreshold: 2,
+	}
+	started := time.Now()
+	res, err := Execute(context.Background(), mock, "c-start", "10.0.0.2", cfg)
+	elapsed := time.Since(started)
+	if !errors.Is(err, ErrDockerStartingTimeout) {
+		t.Fatalf("err=%v", err)
+	}
+	if res.ConsecutiveFailures != 0 || res.ConsecutiveSuccesses != 0 {
+		t.Fatalf("streaks success=%d failure=%d", res.ConsecutiveSuccesses, res.ConsecutiveFailures)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("starting deadline hung for %s", elapsed)
+	}
+}
+
+func TestExecute_StartingThenHealthy(t *testing.T) {
+	var calls int
+	mock := &mockHealthClient{
+		inspectFn: func(id string) (docker.ContainerDetail, error) {
+			calls++
+			detail := startingDetail(nil)
+			if calls >= 2 {
+				detail.State.Health.Status = "healthy"
+			}
+			return detail, nil
+		},
+	}
+	res, err := Execute(context.Background(), mock, "c-start", "10.0.0.2", Config{
+		ProbeType:        TypeContainerState,
+		Interval:         10 * time.Millisecond,
+		Timeout:          time.Second,
+		SuccessThreshold: 1,
+		FailureThreshold: 3,
+	})
+	if err != nil || !res.Healthy {
+		t.Fatalf("err=%v status=%s", err, res.Status)
+	}
+	if res.ConsecutiveFailures != 0 || res.ConsecutiveSuccesses != 1 {
+		t.Fatalf("streaks success=%d failure=%d", res.ConsecutiveSuccesses, res.ConsecutiveFailures)
+	}
+}
+
+func TestExecute_StartingThenUnhealthyHonorsThreshold(t *testing.T) {
+	var calls int
+	mock := &mockHealthClient{
+		inspectFn: func(id string) (docker.ContainerDetail, error) {
+			calls++
+			detail := startingDetail(nil)
+			if calls >= 2 {
+				detail.State.Health.Status = "unhealthy"
+			}
+			return detail, nil
+		},
+	}
+	res, err := Execute(context.Background(), mock, "c-start", "10.0.0.2", Config{
+		ProbeType:        TypeDocker,
+		Interval:         10 * time.Millisecond,
+		Timeout:          time.Second,
+		SuccessThreshold: 1,
+		FailureThreshold: 2,
+	})
+	if !errors.Is(err, ErrThresholdExceeded) {
+		t.Fatalf("err=%v", err)
+	}
+	if res.ConsecutiveFailures != 2 || res.ConsecutiveSuccesses != 0 {
+		t.Fatalf("streaks success=%d failure=%d", res.ConsecutiveSuccesses, res.ConsecutiveFailures)
+	}
+}
+
+func TestExecute_DockerStartingCancellation(t *testing.T) {
+	mock := &mockHealthClient{
+		inspectFn: func(id string) (docker.ContainerDetail, error) {
+			return startingDetail(nil), nil
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	res, err := Execute(ctx, mock, "c-start", "10.0.0.2", Config{
+		ProbeType:        TypeDocker,
+		Interval:         time.Millisecond,
+		Timeout:          time.Second,
+		FailureThreshold: 3,
+	})
+	elapsed := time.Since(started)
+	if !errors.Is(err, ErrProbeTimeout) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err=%v", err)
+	}
+	if res.ConsecutiveFailures != 0 || res.ConsecutiveSuccesses != 0 {
+		t.Fatalf("streaks success=%d failure=%d", res.ConsecutiveSuccesses, res.ConsecutiveFailures)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("cancellation took %s", elapsed)
+	}
+}
+
+func TestExecute_DockerStartingPollIsBounded(t *testing.T) {
+	mock := &mockHealthClient{
+		inspectFn: func(id string) (docker.ContainerDetail, error) {
+			return startingDetail(&docker.HealthCheckConfig{
+				Interval:    400 * time.Millisecond,
+				Timeout:     100 * time.Millisecond,
+				StartPeriod: 200 * time.Millisecond,
+				Retries:     2,
+			}), nil
+		},
+	}
+	started := time.Now()
+	res, err := Execute(context.Background(), mock, "c-start", "10.0.0.2", Config{
+		ProbeType:        TypeDocker,
+		Interval:         time.Millisecond,
+		Timeout:          time.Second,
+		FailureThreshold: 3,
+	})
+	elapsed := time.Since(started)
+	if !errors.Is(err, ErrDockerStartingTimeout) {
+		t.Fatalf("err=%v", err)
+	}
+	if mock.inspects > 6 {
+		t.Fatalf("inspects=%d elapsed=%s; starting poll busy-looped", mock.inspects, elapsed)
+	}
+	if elapsed < time.Second {
+		t.Fatalf("elapsed=%s inspects=%d; poll did not wait", elapsed, mock.inspects)
+	}
+	if res.ConsecutiveFailures != 0 {
+		t.Fatalf("failures=%d", res.ConsecutiveFailures)
+	}
+}
+
+func TestExecute_UnhealthyHonorsFailureThreshold(t *testing.T) {
+	mock := &mockHealthClient{
+		containers: map[string]docker.ContainerDetail{
+			"c-bad": {
+				ID: "c-bad",
+				State: docker.ContainerState{
+					Running: true,
+					Health:  &docker.ContainerHealth{Status: "unhealthy", FailingStreak: 3},
+				},
+			},
+		},
+	}
+	res, err := Execute(context.Background(), mock, "c-bad", "10.0.0.2", Config{
+		ProbeType:        TypeDocker,
+		Interval:         5 * time.Millisecond,
+		Timeout:          time.Second,
+		FailureThreshold: 3,
+		SuccessThreshold: 1,
+	})
+	if !errors.Is(err, ErrThresholdExceeded) {
+		t.Fatalf("err=%v", err)
+	}
+	if res.ConsecutiveFailures != 3 {
+		t.Fatalf("failures=%d", res.ConsecutiveFailures)
+	}
+}
+
+func TestExecute_HealthyHonorsSuccessThreshold(t *testing.T) {
+	mock := &mockHealthClient{
+		containers: map[string]docker.ContainerDetail{
+			"c-ok": {
+				ID: "c-ok",
+				State: docker.ContainerState{
+					Running: true,
+					Health:  &docker.ContainerHealth{Status: "healthy"},
+				},
+			},
+		},
+	}
+	res, err := Execute(context.Background(), mock, "c-ok", "10.0.0.2", Config{
+		ProbeType:        TypeDocker,
+		Interval:         5 * time.Millisecond,
+		Timeout:          time.Second,
+		FailureThreshold: 3,
+		SuccessThreshold: 2,
+	})
+	if err != nil || !res.Healthy || res.ConsecutiveSuccesses != 2 {
+		t.Fatalf("err=%v successes=%d", err, res.ConsecutiveSuccesses)
+	}
+}
+
+func shortStartingHealth() *docker.HealthCheckConfig {
+	return &docker.HealthCheckConfig{
+		Interval:    20 * time.Millisecond,
+		Timeout:     20 * time.Millisecond,
+		StartPeriod: 30 * time.Millisecond,
+		Retries:     1,
+	}
+}
+
+func startingDetail(hc *docker.HealthCheckConfig) docker.ContainerDetail {
+	return docker.ContainerDetail{
+		ID: "c-start",
+		State: docker.ContainerState{
+			Running: true,
+			Health:  &docker.ContainerHealth{Status: "starting"},
+		},
+		HealthCheck: hc,
 	}
 }

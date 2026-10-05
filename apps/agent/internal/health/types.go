@@ -68,6 +68,17 @@ type Observation struct {
 	ExitCode       int           `json:"exitCode,omitempty"`
 	Message        string        `json:"message"`
 	Error          string        `json:"error,omitempty"`
+	// Pending means the probe is still in progress. It is neither success nor failure.
+	Pending bool `json:"pending,omitempty"`
+	// dockerStart carries timings for a Docker "starting" observation.
+	dockerStart *dockerStartClock
+}
+
+// dockerStartClock is the container start time and HEALTHCHECK timing used to
+// bound how long DeployCore waits for Docker to leave "starting".
+type dockerStartClock struct {
+	StartedAt *time.Time
+	Config    *docker.HealthCheckConfig
 }
 
 // Result is the structured output of health check evaluation.

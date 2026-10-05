@@ -69,6 +69,9 @@ type ContainerDetail struct {
 	IPAddress    string
 	Networks     map[string]string   // network name -> IP address
 	Aliases      map[string][]string // network name -> DNS aliases
+	// HealthCheck is the container HEALTHCHECK timing. Nil means the container
+	// has no Docker health configuration. Zero durations mean Docker defaults.
+	HealthCheck *HealthCheckConfig
 }
 
 // ContainerHealth holds the container's health status if a HEALTHCHECK is configured.

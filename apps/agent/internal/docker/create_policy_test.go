@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/docker/docker/api/types/container"
 )
 
 func TestValidateCreateRequest_Valid(t *testing.T) {
@@ -598,5 +600,29 @@ func TestValidateCreateRequest_ReadOnlyRootFS(t *testing.T) {
 	}
 	if err := validateCreateRequest(req); err != nil {
 		t.Fatalf("expected valid request with ReadOnlyRootFS, got: %v", err)
+	}
+}
+
+func TestHealthCheckFromContainerPreservesDurations(t *testing.T) {
+	got := healthCheckFromContainer(&container.Config{
+		Healthcheck: &container.HealthConfig{
+			Test:        []string{"CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health/ready/ || exit 1"},
+			Interval:    30 * time.Second,
+			Timeout:     5 * time.Second,
+			StartPeriod: 20 * time.Second,
+			Retries:     3,
+		},
+	})
+	if got == nil || got.Interval != 30*time.Second || got.Timeout != 5*time.Second || got.StartPeriod != 20*time.Second || got.Retries != 3 {
+		t.Fatalf("health config = %+v", got)
+	}
+	if len(got.Test) != 2 || got.Test[0] != "CMD-SHELL" {
+		t.Fatalf("test = %#v", got.Test)
+	}
+	if healthCheckFromContainer(nil) != nil {
+		t.Fatal("nil config returned a health check")
+	}
+	if healthCheckFromContainer(&container.Config{}) != nil {
+		t.Fatal("container without HEALTHCHECK returned a health check")
 	}
 }

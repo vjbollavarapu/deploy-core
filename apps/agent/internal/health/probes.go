@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/deploycore/deploy-core/apps/agent/internal/docker"
 )
 
 // probeHTTP executes an HTTP GET probe and validates the response status code.
@@ -220,9 +222,9 @@ func probeContainerState(ctx context.Context, client DockerClient, containerID s
 			obs.Error = fmt.Sprintf("docker health is unhealthy (streak: %d)", detail.State.Health.FailingStreak)
 			obs.Message = "docker engine reports unhealthy"
 		case "starting":
-			obs.Success = false
-			obs.Error = "docker health is starting"
+			obs.Pending = true
 			obs.Message = "docker healthcheck starting"
+			obs.dockerStart = dockerStartFromDetail(detail)
 		default:
 			obs.Success = false
 			obs.Error = fmt.Sprintf("unknown docker health status: %s", detail.State.Health.Status)
@@ -234,6 +236,19 @@ func probeContainerState(ctx context.Context, client DockerClient, containerID s
 	obs.Success = true
 	obs.Message = fmt.Sprintf("container running (PID %d)", detail.State.Pid)
 	return obs
+}
+
+func dockerStartFromDetail(detail docker.ContainerDetail) *dockerStartClock {
+	clock := &dockerStartClock{}
+	if detail.StartedAt != nil {
+		started := *detail.StartedAt
+		clock.StartedAt = &started
+	}
+	if detail.HealthCheck != nil {
+		cfg := *detail.HealthCheck
+		clock.Config = &cfg
+	}
+	return clock
 }
 
 func matchExpectedStatus(statusCode int, expectedCode int, expectedRange string) bool {
