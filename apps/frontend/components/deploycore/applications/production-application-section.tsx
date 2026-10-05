@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Braces, FileQuestion, GitBranch, KeyRound } from 'lucide-react'
+import { Braces, FileQuestion, GitBranch, KeyRound, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApplicationLogsPanel } from '@/components/deploycore/applications/application-logs-panel'
 import { ApplicationSettingsPanel } from '@/components/deploycore/applications/application-settings-panel'
 import { ApplicationSourceEditor } from '@/components/deploycore/applications/application-source-editor'
 import { useProductionApplication } from '@/components/deploycore/applications/production-application-shell'
+import { DestructiveConfirmDialog } from '@/components/platform/destructive-confirm-dialog'
 import { EmptyState } from '@/components/platform/empty-state'
 import { ErrorState } from '@/components/platform/error-state'
 import { LoadingState } from '@/components/platform/loading-state'
@@ -22,6 +23,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -31,6 +39,13 @@ import {
   loadApplicationSecrets,
   type SecretMetadata,
 } from '@/lib/applications/application-bootstrap'
+import {
+  applicationVariableFieldErrors,
+  createApplicationVariable,
+  deleteApplicationVariable,
+  updateApplicationVariable,
+  variableErrorMessage,
+} from '@/lib/applications/application-variables'
 import { useOrganization } from '@/lib/auth-context'
 import {
   loadProductionApplicationDeployments,
@@ -449,6 +464,15 @@ function VariablesSection({ applicationId }: { applicationId: string }) {
   const [rows, setRows] = useState<VariableDetail[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editing, setEditing] = useState<VariableDetail | null>(null)
+  const [keyName, setKeyName] = useState('')
+  const [value, setValue] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{ key?: string; value?: string }>({})
+  const [formError, setFormError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [removeTarget, setRemoveTarget] = useState<VariableDetail | null>(null)
+  const savingRef = useRef(false)
 
   useEffect(() => {
     if (!activeOrg?.id) return
@@ -466,6 +490,90 @@ function VariablesSection({ applicationId }: { applicationId: string }) {
     }
   }, [activeOrg?.id, applicationId, attempt])
 
+  function closeEditor() {
+    setEditorOpen(false)
+    setEditing(null)
+    setKeyName('')
+    setValue('')
+    setFieldErrors({})
+    setFormError(null)
+  }
+
+  function openCreate() {
+    setEditing(null)
+    setKeyName('')
+    setValue('')
+    setFieldErrors({})
+    setFormError(null)
+    setEditorOpen(true)
+  }
+
+  function openEdit(row: VariableDetail) {
+    setEditing(row)
+    setKeyName(row.key)
+    setValue(row.value)
+    setFieldErrors({})
+    setFormError(null)
+    setEditorOpen(true)
+  }
+
+  function reloadRows() {
+    setRows(null)
+    setError(null)
+    setAttempt((current) => current + 1)
+  }
+
+  async function saveVariable() {
+    if (!activeOrg?.id || savingRef.current) return
+    const errors = applicationVariableFieldErrors(keyName, value)
+    if (errors.key || errors.value) {
+      setFieldErrors(errors)
+      setFormError(null)
+      return
+    }
+    savingRef.current = true
+    setSaving(true)
+    setFormError(null)
+    const savedKey = keyName.trim()
+    try {
+      if (editing) {
+        await updateApplicationVariable(apiClient, editing.id, { key: keyName, value })
+      } else {
+        await createApplicationVariable(apiClient, {
+          organizationId: activeOrg.id,
+          applicationId,
+          key: keyName,
+          value,
+        })
+      }
+      closeEditor()
+      toast.success(editing ? `Updated ${savedKey}` : `Added ${savedKey}`)
+      reloadRows()
+    } catch (err) {
+      setFormError(variableErrorMessage(err, [value]))
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  async function removeVariable() {
+    if (!removeTarget || savingRef.current) return
+    const target = removeTarget
+    savingRef.current = true
+    setSaving(true)
+    try {
+      await deleteApplicationVariable(apiClient, target.id)
+      toast.success(`Removed ${target.key}`)
+      reloadRows()
+    } catch (err) {
+      toast.error(variableErrorMessage(err, [target.value], 'The variable could not be removed.'))
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
   if (!activeOrg?.id) {
     return <ErrorState title="Could not load variables" message="Select an organization to load variables." />
   }
@@ -477,42 +585,155 @@ function VariablesSection({ applicationId }: { applicationId: string }) {
         onRetry={() => {
           setError(null)
           setRows(null)
-          setAttempt((value) => value + 1)
+          setAttempt((current) => current + 1)
         }}
       />
     )
   }
   if (!rows) return <LoadingState label="Loading variables…" />
-  if (rows.length === 0) {
-    return <EmptyState icon={Braces} title="No variables" description="This application has no variables in the control plane." />
-  }
 
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle>Environment variables</CardTitle>
-        <CardDescription>Values stored for this application. Demo fixtures are not shown.</CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Key</TableHead>
-              <TableHead>Value</TableHead>
-              <TableHead>Scope</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((row) => (
-              <TableRow key={row.id || row.key}>
-                <TableCell className="font-mono text-xs">{row.key}</TableCell>
-                <TableCell className="font-mono text-xs">{row.value}</TableCell>
-                <TableCell>{row.scope}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-end">
+        <Button size="sm" type="button" onClick={openCreate} disabled={saving}>
+          <Plus data-icon="inline-start" />
+          Add variable
+        </Button>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState
+          icon={Braces}
+          title="No variables"
+          description="This application has no variables in the control plane."
+        />
+      ) : (
+        <Card size="sm">
+          <CardHeader>
+            <CardTitle>Environment variables</CardTitle>
+            <CardDescription>Values stored for this application. Demo fixtures are not shown.</CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Key</TableHead>
+                  <TableHead>Value</TableHead>
+                  <TableHead>Scope</TableHead>
+                  <TableHead className="w-10 text-right">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((row) => (
+                  <TableRow key={row.id || row.key}>
+                    <TableCell className="font-mono text-xs">{row.key}</TableCell>
+                    <TableCell className="font-mono text-xs">{row.value}</TableCell>
+                    <TableCell>{row.scope}</TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Actions for ${row.key}`}
+                              disabled={!row.id || saving}
+                            />
+                          }
+                        >
+                          <MoreHorizontal />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => openEdit(row)} disabled={!row.id}>
+                            <Pencil />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem variant="destructive" onClick={() => setRemoveTarget(row)} disabled={!row.id}>
+                            <Trash2 />
+                            Remove
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+      <Dialog
+        open={editorOpen}
+        onOpenChange={(next) => {
+          if (!next) closeEditor()
+          else setEditorOpen(true)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editing ? `Edit ${editing.key}` : 'Add variable'}</DialogTitle>
+            <DialogDescription>Stored for this application.</DialogDescription>
+          </DialogHeader>
+          <FieldGroup>
+            <Field data-invalid={Boolean(fieldErrors.key)}>
+              <FieldLabel htmlFor="variable-key">Key</FieldLabel>
+              <Input
+                id="variable-key"
+                className="font-mono"
+                value={keyName}
+                autoComplete="off"
+                aria-invalid={Boolean(fieldErrors.key)}
+                onChange={(event) => {
+                  setKeyName(event.target.value)
+                  if (fieldErrors.key) setFieldErrors((current) => ({ ...current, key: undefined }))
+                }}
+                placeholder="DATABASE_URL"
+              />
+              {fieldErrors.key ? <FieldError>{fieldErrors.key}</FieldError> : null}
+            </Field>
+            <Field data-invalid={Boolean(fieldErrors.value)}>
+              <FieldLabel htmlFor="variable-value">Value</FieldLabel>
+              <Input
+                id="variable-value"
+                className="font-mono"
+                value={value}
+                autoComplete="off"
+                aria-invalid={Boolean(fieldErrors.value)}
+                onChange={(event) => {
+                  setValue(event.target.value)
+                  if (fieldErrors.value) setFieldErrors((current) => ({ ...current, value: undefined }))
+                }}
+              />
+              {fieldErrors.value ? <FieldError>{fieldErrors.value}</FieldError> : null}
+            </Field>
+            {formError ? <FieldError>{formError}</FieldError> : null}
+          </FieldGroup>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeEditor} disabled={saving}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void saveVariable()} disabled={saving}>
+              {saving ? 'Saving…' : 'Save variable'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {removeTarget ? (
+        <DestructiveConfirmDialog
+          open
+          pending={saving}
+          onOpenChange={(next) => {
+            if (!next) setRemoveTarget(null)
+          }}
+          title={`Remove ${removeTarget.key}?`}
+          description={`This removes ${removeTarget.key} from this application.`}
+          confirmLabel="Remove variable"
+          confirmationPhrase={removeTarget.key}
+          onConfirm={removeVariable}
+        />
+      ) : null}
+    </div>
   )
 }
