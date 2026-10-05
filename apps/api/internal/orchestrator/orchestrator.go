@@ -596,23 +596,42 @@ func (o *Orchestrator) stepHealthChecking(ctx context.Context, d deployments.Dep
 		})
 	}
 
-	payload := policy.ToAgentPayload()
-	payload["deploymentId"] = d.ID.String()
-	if d.TargetRevisionID != nil {
-		payload["revisionId"] = d.TargetRevisionID.String()
-	}
-	if err := o.issueOrSimulate(ctx, d, protocol.OpRunHealthCheck, payload); err != nil {
-		_, _ = o.health.RecordProbe(ctx, healthchecks.ProbeInput{
-			OrganizationID: d.OrganizationID,
-			ApplicationID:  d.ApplicationID,
-			RevisionID:     d.TargetRevisionID,
-			DeploymentID:   &d.ID,
-			Success:        false,
-			ProbeType:      policy.Type,
-			Message:        err.Error(),
-			Policy:         policy,
-		})
+	desired, _, _, err := o.replicaDeployContext(ctx, d)
+	if err != nil {
 		return o.fail(ctx, d, deployments.StatusHealthChecking, deployments.StatusHealthCheckFailed, apierror.CodeHealthCheckFailed, err.Error())
+	}
+	list, err := o.replicas.ListByApplication(ctx, d.ApplicationID)
+	if err != nil {
+		return deployments.Deployment{}, err
+	}
+	targets, err := targetHealthReplicas(list, d.TargetRevisionID, desired)
+	if err != nil {
+		return o.fail(ctx, d, deployments.StatusHealthChecking, deployments.StatusHealthCheckFailed, apierror.CodeHealthCheckFailed, err.Error())
+	}
+	base := policy.ToAgentPayload()
+	base["deploymentId"] = d.ID.String()
+	if d.TargetRevisionID != nil {
+		base["revisionId"] = d.TargetRevisionID.String()
+	}
+	for _, rep := range targets {
+		payload := make(map[string]any, len(base)+1)
+		for key, value := range base {
+			payload[key] = value
+		}
+		payload["containerName"] = rep.ContainerName
+		if err := o.issueOrSimulate(ctx, d, protocol.OpRunHealthCheck, payload); err != nil {
+			_, _ = o.health.RecordProbe(ctx, healthchecks.ProbeInput{
+				OrganizationID: d.OrganizationID,
+				ApplicationID:  d.ApplicationID,
+				RevisionID:     d.TargetRevisionID,
+				DeploymentID:   &d.ID,
+				Success:        false,
+				ProbeType:      policy.Type,
+				Message:        err.Error(),
+				Policy:         policy,
+			})
+			return o.fail(ctx, d, deployments.StatusHealthChecking, deployments.StatusHealthCheckFailed, apierror.CodeHealthCheckFailed, err.Error())
+		}
 	}
 
 	// Simulate/agent success path: record enough consecutive successes to satisfy policy
@@ -638,8 +657,6 @@ func (o *Orchestrator) stepHealthChecking(ctx context.Context, d deployments.Dep
 			fmt.Sprintf("health state %s is not ready for activation", st.State))
 	}
 
-	desired, _, _, _ := o.replicaDeployContext(ctx, d)
-	list, _ := o.replicas.ListByApplication(ctx, d.ApplicationID)
 	healthy := true
 	for _, rep := range list {
 		if rep.ReplicaIndex >= desired {
@@ -653,6 +670,40 @@ func (o *Orchestrator) stepHealthChecking(ctx context.Context, d deployments.Dep
 		"probeType":       policy.Type,
 		"desiredReplicas": desired,
 	})
+}
+
+// targetHealthReplicas returns the desired replica slots that belong to the
+// deployment's target revision, in replica-index order. Slots for an older
+// revision are left out.
+func targetHealthReplicas(list []replicas.Replica, target *uuid.UUID, desired int) ([]replicas.Replica, error) {
+	if target == nil || desired < 1 {
+		return nil, errors.New("candidate container is missing for health check")
+	}
+	byIndex := make(map[int]replicas.Replica, desired)
+	for _, rep := range list {
+		if rep.ReplicaIndex < 0 || rep.ReplicaIndex >= desired {
+			continue
+		}
+		if rep.RevisionID == nil || *rep.RevisionID != *target {
+			continue
+		}
+		if strings.TrimSpace(rep.ContainerName) == "" {
+			continue
+		}
+		byIndex[rep.ReplicaIndex] = rep
+	}
+	if len(byIndex) != desired {
+		return nil, errors.New("candidate container is missing for health check")
+	}
+	out := make([]replicas.Replica, 0, desired)
+	for i := 0; i < desired; i++ {
+		rep, ok := byIndex[i]
+		if !ok {
+			return nil, errors.New("candidate container is missing for health check")
+		}
+		out = append(out, rep)
+	}
+	return out, nil
 }
 
 func (o *Orchestrator) stepActivating(ctx context.Context, d deployments.Deployment) (deployments.Deployment, error) {

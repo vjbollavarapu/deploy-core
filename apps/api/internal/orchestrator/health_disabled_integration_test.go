@@ -9,6 +9,7 @@ import (
 
 	"github.com/deploycore/deploy-core/apps/api/internal/deployments"
 	"github.com/deploycore/deploy-core/packages/protocol-go"
+	"github.com/google/uuid"
 )
 
 func TestDisabledHealthCheckSkipsProbeAndActivates(t *testing.T) {
@@ -83,9 +84,71 @@ func TestConfiguredHTTPHealthCheckStillProbes(t *testing.T) {
 		if enabled, ok := cmd.payload["enabled"].(bool); !ok || !enabled {
 			t.Fatalf("HTTP probe enabled = %#v", cmd.payload["enabled"])
 		}
+		name, _ := cmd.payload["containerName"].(string)
+		if name == "" {
+			t.Fatalf("HTTP probe missing containerName: %#v", cmd.payload)
+		}
+		var revisionID *string
+		if err := pool.QueryRow(ctx, `
+			SELECT revision_id::text FROM application_replicas
+			WHERE application_id = $1 AND container_name = $2`, appID, name).Scan(&revisionID); err != nil {
+			t.Fatal(err)
+		}
+		if got.TargetRevisionID == nil || revisionID == nil || *revisionID != got.TargetRevisionID.String() {
+			t.Fatalf("health check container %s revision %v, target %v", name, revisionID, got.TargetRevisionID)
+		}
 	}
 	if !probed {
 		t.Fatal("configured HTTP health check did not issue OpRunHealthCheck")
+	}
+}
+
+func TestHealthCheckUsesTargetRevisionContainers(t *testing.T) {
+	pool, orgID, envID, serverID, appID, userID := seedRollingApp(t, []byte(`{"desiredReplicas":2}`))
+	ctx := context.Background()
+	oldRevision := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO revisions (id, organization_id, application_id, revision_number, status, effective_config)
+		VALUES ($1, $2, $3, 9, 'ACTIVE', '{}'::jsonb)`, oldRevision, orgID, appID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO application_replicas (
+			organization_id, application_id, revision_id, server_id, replica_index, container_name, status
+		) VALUES ($1, $2, $3, $4, 7, 'dc-api-r9-8', 'RUNNING')`, orgID, appID, oldRevision, serverID); err != nil {
+		t.Fatal(err)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	repo := deployments.NewPostgresRepository(pool)
+	orch := New(pool, repo, log, Config{SimulateAgent: true})
+	got := runDeploy(t, ctx, repo, orch, orgID, appID, envID, serverID, userID, "health-replicas", deployments.TriggerManual, nil)
+	if got.Status != deployments.StatusRunning || got.TargetRevisionID == nil {
+		t.Fatalf("status=%s", got.Status)
+	}
+
+	var names []string
+	for _, cmd := range commandsFor(orch, got.ID) {
+		if cmd.op != protocol.OpRunHealthCheck {
+			continue
+		}
+		name, _ := cmd.payload["containerName"].(string)
+		if name == "" || name == "dc-api-r9-8" {
+			t.Fatalf("health payload = %#v", cmd.payload)
+		}
+		var revisionID string
+		if err := pool.QueryRow(ctx, `
+			SELECT revision_id::text FROM application_replicas
+			WHERE application_id = $1 AND container_name = $2`, appID, name).Scan(&revisionID); err != nil {
+			t.Fatal(err)
+		}
+		if revisionID != got.TargetRevisionID.String() {
+			t.Fatalf("container %s belongs to %s, target %s", name, revisionID, got.TargetRevisionID)
+		}
+		names = append(names, name)
+	}
+	if len(names) != 2 || names[0] == names[1] {
+		t.Fatalf("health checks = %v", names)
 	}
 }
 

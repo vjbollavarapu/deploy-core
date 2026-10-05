@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/deploycore/deploy-core/apps/api/internal/deployments"
+	"github.com/deploycore/deploy-core/apps/api/internal/replicas"
 	"github.com/deploycore/deploy-core/packages/protocol-go"
 	"github.com/google/uuid"
 )
@@ -160,5 +161,25 @@ func TestAcceptBuiltImageRequiresIdentity(t *testing.T) {
 	id, err := acceptBuiltImage(map[string]any{"imageId": " sha256:abc ", "tags": []any{tag}}, tag)
 	if err != nil || id != "sha256:abc" {
 		t.Fatalf("id=%q err=%v", id, err)
+	}
+}
+
+func TestTargetHealthReplicasKeepsTargetRevisionOnly(t *testing.T) {
+	target := uuid.New()
+	previous := uuid.New()
+	list := []replicas.Replica{
+		{ReplicaIndex: 0, RevisionID: &target, ContainerName: "dc-api-r2-1"},
+		{ReplicaIndex: 1, RevisionID: &previous, ContainerName: "dc-api-r1-2"},
+		{ReplicaIndex: 2, RevisionID: &target, ContainerName: "dc-api-r2-3"},
+	}
+	got, err := targetHealthReplicas(list, &target, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ContainerName != "dc-api-r2-1" {
+		t.Fatalf("replicas = %#v", got)
+	}
+	if _, err := targetHealthReplicas(list, &target, 2); err == nil {
+		t.Fatal("previous-revision slot was accepted as a health target")
 	}
 }
