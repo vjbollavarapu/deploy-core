@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/deploycore/deploy-core/apps/api/internal/deployments"
@@ -110,5 +111,54 @@ func TestActivationProxyAttachedOnlyWithTraefik(t *testing.T) {
 	}
 	if routed["traefik"] == nil {
 		t.Fatal("routed activation dropped traefik config")
+	}
+}
+
+func TestLocalBuildTagIsRevisionScoped(t *testing.T) {
+	id := uuid.MustParse("742c2b91-80b8-4a8e-93ba-82ee7480d285")
+	tag := localBuildTag(id)
+	if tag != "deploycore-build:742c2b91-80b8-4a8e-93ba-82ee7480d285" || !isLocalBuildTag(tag) {
+		t.Fatalf("tag=%q", tag)
+	}
+	for _, forbidden := range []string{"https://github.com/acme/app", "ghp_secret", "token", "://"} {
+		if strings.Contains(tag, forbidden) {
+			t.Fatalf("tag %q contains %q", tag, forbidden)
+		}
+	}
+	if isLocalBuildTag("ghcr.io/example/api:1") || isLocalBuildTag("local:candidate") || isLocalBuildTag("deploycore-build:not-a-uuid") {
+		t.Fatal("non-revision tag was treated as a local build")
+	}
+}
+
+func TestRevisionRunImageKeepsRegistryPulls(t *testing.T) {
+	image, policy := revisionRunImage("ghcr.io/example/api:1", "ghcr.io/example/api:1")
+	if image != "ghcr.io/example/api:1" || policy != "" {
+		t.Fatalf("image=%q policy=%q", image, policy)
+	}
+	image, policy = revisionRunImage("", "ghcr.io/example/api:1")
+	if image != "ghcr.io/example/api:1" || policy != "" {
+		t.Fatalf("fallback image=%q policy=%q", image, policy)
+	}
+	local := localBuildTag(uuid.MustParse("742c2b91-80b8-4a8e-93ba-82ee7480d285"))
+	image, policy = revisionRunImage("sha256:abc", local)
+	if image != local || policy != "never" {
+		t.Fatalf("built image=%q policy=%q", image, policy)
+	}
+}
+
+func TestAcceptBuiltImageRequiresIdentity(t *testing.T) {
+	tag := localBuildTag(uuid.MustParse("742c2b91-80b8-4a8e-93ba-82ee7480d285"))
+	if _, err := acceptBuiltImage(nil, tag); err == nil {
+		t.Fatal("nil result accepted")
+	}
+	if _, err := acceptBuiltImage(map[string]any{"status": "built", "tags": []any{tag}}, tag); err == nil {
+		t.Fatal("missing image id accepted")
+	}
+	if _, err := acceptBuiltImage(map[string]any{"imageId": "sha256:abc"}, tag); err == nil {
+		t.Fatal("missing tag accepted")
+	}
+	id, err := acceptBuiltImage(map[string]any{"imageId": " sha256:abc ", "tags": []any{tag}}, tag)
+	if err != nil || id != "sha256:abc" {
+		t.Fatalf("id=%q err=%v", id, err)
 	}
 }

@@ -120,11 +120,19 @@ func TestGitRevisionSnapshotAndExactBuildPayloads(t *testing.T) {
 
 	build := payloadFor(t, orch, protocol.OpBuildImage, protocol.BuildPhaseBuild)
 	assertExactKeys(t, build, []string{
-		"phase", "deploymentId", "applicationId", "revisionId", "repositoryUrl", "gitBranch", "dockerfilePath", "contextPath",
+		"phase", "deploymentId", "applicationId", "revisionId", "repositoryUrl", "gitBranch", "dockerfilePath", "contextPath", "tags",
 	})
+	tag := "deploycore-build:" + got.TargetRevisionID.String()
 	if build["dockerfilePath"] != "Dockerfile.prod" || build["contextPath"] != "apps/backend" || build["revisionId"] != got.TargetRevisionID.String() {
 		t.Fatalf("build=%v", build)
 	}
+	tags, _ := build["tags"].([]string)
+	if len(tags) != 1 || tags[0] != tag {
+		t.Fatalf("tags=%#v", build["tags"])
+	}
+	assertBuiltRevision(t, pool, *got.TargetRevisionID, "sha256:sim-"+got.ID.String()[:8], tag)
+	assertLocalDeploy(t, orch, tag)
+	assertNoCredentialMaterial(t, tag, "https://github.com/vjbollavarapu/modulyn", "ghp_")
 }
 
 func TestGitBlankDockerfileAndContextUseDefaults(t *testing.T) {
@@ -213,6 +221,14 @@ func TestImageSourceStillPullsAndSkipsFetch(t *testing.T) {
 	if _, ok := pull["gitConnectionId"]; ok || pull["repositoryUrl"] != nil {
 		t.Fatalf("image pull changed: %v", pull)
 	}
+	deploy := payloadFor(t, orch, protocol.OpDeployRevision, "")
+	if deploy["image"] != "ghcr.io/example/api:1" {
+		t.Fatalf("deploy image=%v", deploy["image"])
+	}
+	if _, ok := deploy["pullPolicy"]; ok {
+		t.Fatalf("image deploy pullPolicy=%v", deploy["pullPolicy"])
+	}
+	assertBuiltRevision(t, pool, *got.TargetRevisionID, "ghcr.io/example/api:1", "ghcr.io/example/api:1")
 }
 
 func TestSecondDeploymentLeavesFailedRevisionUntouched(t *testing.T) {
@@ -355,6 +371,147 @@ func TestPrivateGitSnapshotsConnectionIDWithoutCredential(t *testing.T) {
 	}
 	if strings.Contains(events, token) || strings.Contains(commands, token) || strings.Contains(logs.String(), token) {
 		t.Fatal("git token appeared in events, commands, or logs")
+	}
+}
+
+func TestGitBuildConsumesAgentImageIdentity(t *testing.T) {
+	pool := testPool(t)
+	orgID, appID, envID, serverID, userID := seedGitApp(t, pool, nil, nil)
+	const imageID = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	repo := deployments.NewPostgresRepository(pool)
+	orch := orchestrator.New(pool, repo, log, orchestrator.Config{
+		SimulateAgent: true,
+		SimulatedBuildResult: func() map[string]any {
+			var revID uuid.UUID
+			if err := pool.QueryRow(context.Background(), `
+				SELECT id FROM revisions WHERE application_id = $1 ORDER BY revision_number DESC LIMIT 1`, appID).Scan(&revID); err != nil {
+				t.Fatalf("revision: %v", err)
+			}
+			return map[string]any{
+				"imageId": imageID,
+				"tags":    []any{"deploycore-build:" + revID.String()},
+			}
+		},
+	})
+	created, err := repo.CreateQueued(context.Background(), orgID, appID, envID, &serverID, deployments.TriggerManual, nil, nil, "git-built-id", userID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Execute(context.Background(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != deployments.StatusRunning || got.TargetRevisionID == nil {
+		t.Fatalf("status=%s", got.Status)
+	}
+	tag := "deploycore-build:" + got.TargetRevisionID.String()
+	assertBuiltRevision(t, pool, *got.TargetRevisionID, imageID, tag)
+	assertLocalDeploy(t, orch, tag)
+	assertNoCredentialMaterial(t, tag, "https://github.com/vjbollavarapu/modulyn", "token")
+}
+
+func TestGitBuildWithoutImageIDFailsClosed(t *testing.T) {
+	pool := testPool(t)
+	orgID, appID, envID, serverID, userID := seedGitApp(t, pool, nil, nil)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	repo := deployments.NewPostgresRepository(pool)
+	orch := orchestrator.New(pool, repo, log, orchestrator.Config{
+		SimulateAgent: true,
+		SimulatedBuildResult: func() map[string]any {
+			return map[string]any{"status": "built"}
+		},
+	})
+	created, err := repo.CreateQueued(context.Background(), orgID, appID, envID, &serverID, deployments.TriggerManual, nil, nil, "git-no-image", userID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := orch.Execute(context.Background(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != deployments.StatusBuildFailed || got.TargetRevisionID == nil {
+		t.Fatalf("status=%s revision=%v", got.Status, got.TargetRevisionID)
+	}
+	if got.ErrorCode == nil || *got.ErrorCode != protocol.ErrImageBuildFailed {
+		t.Fatalf("error=%v", got.ErrorCode)
+	}
+	var digest, tag, status *string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT image_digest, image_tag, status FROM revisions WHERE id = $1`, *got.TargetRevisionID).
+		Scan(&digest, &tag, &status); err != nil {
+		t.Fatal(err)
+	}
+	if digest != nil || tag != nil || status == nil || *status != "FAILED" {
+		t.Fatalf("digest=%v tag=%v status=%v", digest, tag, status)
+	}
+	for _, cmd := range orch.SimulatedCommands() {
+		if cmd.Operation == protocol.OpDeployRevision {
+			t.Fatalf("deploy advanced after a build without an image id: %#v", cmd.Payload)
+		}
+		raw, _ := json.Marshal(cmd.Payload)
+		if strings.Contains(string(raw), "local:candidate") {
+			t.Fatalf("placeholder image in %s", raw)
+		}
+	}
+}
+
+func TestGitStaleImageReferenceUsesBuiltIdentity(t *testing.T) {
+	pool := testPool(t)
+	orgID, appID, envID, serverID, userID := seedGitApp(t, pool, nil, nil)
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE application_configs SET image_reference = 'ghcr.io/stale/old:1' WHERE application_id = $1`, appID); err != nil {
+		t.Fatal(err)
+	}
+	orch, got := runSimulated(t, pool, orgID, appID, envID, serverID, userID, "git-stale-image")
+	if got.Status != deployments.StatusRunning || got.TargetRevisionID == nil {
+		t.Fatalf("status=%s", got.Status)
+	}
+	tag := "deploycore-build:" + got.TargetRevisionID.String()
+	assertBuiltRevision(t, pool, *got.TargetRevisionID, "sha256:sim-"+got.ID.String()[:8], tag)
+	assertLocalDeploy(t, orch, tag)
+	deploy := payloadFor(t, orch, protocol.OpDeployRevision, "")
+	if deploy["image"] == "ghcr.io/stale/old:1" || deploy["image"] == "local:candidate" {
+		t.Fatalf("deploy image=%v", deploy["image"])
+	}
+}
+
+func assertBuiltRevision(t *testing.T, pool *pgxpool.Pool, revisionID uuid.UUID, digest, tag string) {
+	t.Helper()
+	var gotDigest, gotTag string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT COALESCE(image_digest, ''), COALESCE(image_tag, '') FROM revisions WHERE id = $1`, revisionID).
+		Scan(&gotDigest, &gotTag); err != nil {
+		t.Fatal(err)
+	}
+	if gotDigest != digest || gotTag != tag || gotDigest == "local:candidate" || gotTag == "local:candidate" {
+		t.Fatalf("digest=%q tag=%q", gotDigest, gotTag)
+	}
+}
+
+func assertLocalDeploy(t *testing.T, orch *orchestrator.Orchestrator, tag string) {
+	t.Helper()
+	deploy := payloadFor(t, orch, protocol.OpDeployRevision, "")
+	if deploy["image"] != tag || deploy["pullPolicy"] != "never" {
+		t.Fatalf("deploy=%v", deploy)
+	}
+}
+
+func assertNoCredentialMaterial(t *testing.T, tag string, forbidden ...string) {
+	t.Helper()
+	for _, item := range forbidden {
+		if item != "" && strings.Contains(tag, item) {
+			t.Fatalf("tag %q contains %q", tag, item)
+		}
+	}
+	if strings.Contains(tag, "://") || strings.Contains(tag, "github.com") {
+		t.Fatalf("tag %q contains a repository location", tag)
 	}
 }
 

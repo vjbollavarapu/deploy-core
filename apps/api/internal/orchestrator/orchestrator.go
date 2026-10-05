@@ -37,6 +37,10 @@ type Config struct {
 	ForceStartFail bool
 	// ForceRoutingFail fails ACTIVATING before retirement (test-only).
 	ForceRoutingFail bool
+	// SimulatedBuildResult supplies the BUILD_IMAGE build-phase result while
+	// SimulateAgent is set. Production reads the completed agent command.
+	// A result without imageId fails the build.
+	SimulatedBuildResult func() map[string]any
 }
 
 // HealthGate records aggregated health during deployment verification.
@@ -323,21 +327,34 @@ func (o *Orchestrator) stepBuilding(ctx context.Context, d deployments.Deploymen
 			}
 		}
 	}
-	if err := o.issueOrSimulate(ctx, d, op, payload); err != nil {
+	var result map[string]any
+	if cfg.SourceType == "image" {
+		if err := o.issueOrSimulate(ctx, d, op, payload); err != nil {
+			return o.fail(ctx, d, deployments.StatusBuilding, deployments.StatusImageFailed, "BUILD_FAILED", err.Error())
+		}
+	} else {
+		if d.TargetRevisionID == nil {
+			return o.fail(ctx, d, deployments.StatusBuilding, deployments.StatusBuildFailed, protocol.ErrImageBuildFailed, "revision is required to tag the built image")
+		}
+		payload["tags"] = []string{localBuildTag(*d.TargetRevisionID)}
+		var err error
+		result, err = o.issueCommand(ctx, d, op, payload)
+		if err != nil {
+			return o.fail(ctx, d, deployments.StatusBuilding, deployments.StatusBuildFailed, agentFailureCode(err, protocol.ErrImageBuildFailed), err.Error())
+		}
+	}
+	digest, tag, err := revisionImageIdentity(cfg, d, result, o.cfg.SimulateAgent)
+	if err != nil {
 		failTo := deployments.StatusBuildFailed
-		code := agentFailureCode(err, protocol.ErrImageBuildFailed)
 		if cfg.SourceType == "image" {
 			failTo = deployments.StatusImageFailed
-			code = "BUILD_FAILED"
 		}
-		return o.fail(ctx, d, deployments.StatusBuilding, failTo, code, err.Error())
-	}
-	digest := strOr(cfg.ImageReference, "local:candidate")
-	if o.cfg.SimulateAgent {
-		digest = fmt.Sprintf("sha256:sim-%s", d.ID.String()[:8])
+		return o.fail(ctx, d, deployments.StatusBuilding, failTo, protocol.ErrImageBuildFailed, err.Error())
 	}
 	if d.TargetRevisionID != nil {
-		_ = o.updateRevisionImage(ctx, *d.TargetRevisionID, digest, strOr(cfg.ImageReference, "local:candidate"))
+		if err := o.updateRevisionImage(ctx, *d.TargetRevisionID, digest, tag); err != nil {
+			return o.fail(ctx, d, deployments.StatusBuilding, deployments.StatusBuildFailed, "CONFIG_ERROR", err.Error())
+		}
 	}
 	return o.advance(ctx, d, deployments.StatusImageReady, "image ready", map[string]any{"imageDigest": digest})
 }
@@ -1134,8 +1151,16 @@ func (o *Orchestrator) activateRevision(ctx context.Context, appID, newID uuid.U
 }
 
 func (o *Orchestrator) issueOrSimulate(ctx context.Context, d deployments.Deployment, op string, payload map[string]any) error {
+	_, err := o.issueCommand(ctx, d, op, payload)
+	return err
+}
+
+func (o *Orchestrator) issueCommand(ctx context.Context, d deployments.Deployment, op string, payload map[string]any) (map[string]any, error) {
 	if d.ServerID == nil {
-		return errors.New("no server")
+		return nil, errors.New("no server")
+	}
+	if d.TargetRevisionID != nil && (op == protocol.OpDeployRevision || op == protocol.OpStartContainer || op == protocol.OpRunHealthCheck) {
+		o.applyRevisionRunImage(ctx, d, op, payload)
 	}
 	if o.cfg.SimulateAgent {
 		o.simulated = append(o.simulated, simulatedCommand{
@@ -1147,10 +1172,13 @@ func (o *Orchestrator) issueOrSimulate(ctx context.Context, d deployments.Deploy
 			slog.String("operation", op),
 			slog.String("deploymentId", d.ID.String()),
 		)
-		return nil
+		if op == protocol.OpBuildImage && payload["phase"] == protocol.BuildPhaseBuild && o.cfg.SimulatedBuildResult != nil {
+			return o.cfg.SimulatedBuildResult(), nil
+		}
+		return nil, nil
 	}
 	if !o.agentReachable(ctx, *d.ServerID) {
-		return fmt.Errorf("target server agent not reachable")
+		return nil, fmt.Errorf("target server agent not reachable")
 	}
 
 	payload["applicationId"] = d.ApplicationID.String()
@@ -1159,22 +1187,11 @@ func (o *Orchestrator) issueOrSimulate(ctx context.Context, d deployments.Deploy
 
 	if d.TargetRevisionID != nil {
 		payload["revisionId"] = d.TargetRevisionID.String()
-		var digest, tag string
 		var revNumber int
 		_ = o.pool.QueryRow(ctx, `
-			SELECT COALESCE(image_digest, ''), COALESCE(image_tag, ''), revision_number
-			FROM revisions WHERE id = $1`, *d.TargetRevisionID).Scan(&digest, &tag, &revNumber)
+			SELECT revision_number FROM revisions WHERE id = $1`, *d.TargetRevisionID).Scan(&revNumber)
 		if revNumber > 0 {
 			payload["revisionNumber"] = revNumber
-		}
-		if _, ok := payload["image"]; !ok && (op == protocol.OpDeployRevision || op == protocol.OpStartContainer || op == protocol.OpRunHealthCheck) {
-			image := digest
-			if image == "" {
-				image = tag
-			}
-			if image != "" {
-				payload["image"] = image
-			}
 		}
 	}
 	now := o.now().UTC()
@@ -1190,9 +1207,13 @@ func (o *Orchestrator) issueOrSimulate(ctx context.Context, d deployments.Deploy
 		CorrelationID:  strPtr(d.ID.String()),
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return o.waitForCommand(ctx, cmd.ID)
+	completed, err := o.waitForCommand(ctx, cmd.ID)
+	if err != nil {
+		return nil, err
+	}
+	return completed.Result, nil
 }
 
 // agentReachable reports whether an authenticated agent is heartbeating for the server.
@@ -1213,34 +1234,34 @@ func (o *Orchestrator) buildTraefikPayload(ctx context.Context, appID uuid.UUID,
 	return domains.BuildAgentTraefikConfig(appSlug, list)
 }
 
-func (o *Orchestrator) waitForCommand(ctx context.Context, commandID uuid.UUID) error {
+func (o *Orchestrator) waitForCommand(ctx context.Context, commandID uuid.UUID) (agentcmd.Command, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	deadline := o.now().UTC().Add(10 * time.Minute)
 	for {
 		cmd, err := o.commands.Get(ctx, commandID)
 		if err != nil {
-			return err
+			return agentcmd.Command{}, err
 		}
 		switch cmd.Status {
 		case protocol.StatusCompleted:
-			return nil
+			return cmd, nil
 		case protocol.StatusFailed, protocol.StatusExpired, protocol.StatusCancelled:
 			msg := "agent command " + cmd.Status
 			if cmd.ErrorMessage != nil && *cmd.ErrorMessage != "" {
 				msg = *cmd.ErrorMessage
 			}
 			if cmd.ErrorCode != nil && *cmd.ErrorCode != "" {
-				return fmt.Errorf("%s: %s", *cmd.ErrorCode, msg)
+				return agentcmd.Command{}, fmt.Errorf("%s: %s", *cmd.ErrorCode, msg)
 			}
-			return errors.New(msg)
+			return agentcmd.Command{}, errors.New(msg)
 		}
 		if o.now().UTC().After(deadline) {
-			return fmt.Errorf("agent command timed out waiting for completion")
+			return agentcmd.Command{}, fmt.Errorf("agent command timed out waiting for completion")
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return agentcmd.Command{}, ctx.Err()
 		case <-ticker.C:
 		}
 	}
@@ -1283,6 +1304,111 @@ func secretList(m map[string]any) []any {
 		out = append(out, map[string]any{"name": name, "ref": meta})
 	}
 	return out
+}
+
+const localBuildRepository = "deploycore-build"
+
+func localBuildTag(revisionID uuid.UUID) string {
+	return localBuildRepository + ":" + revisionID.String()
+}
+
+func isLocalBuildTag(tag string) bool {
+	prefix := localBuildRepository + ":"
+	idText := strings.TrimPrefix(tag, prefix)
+	if idText == tag || idText == "" {
+		return false
+	}
+	id, err := uuid.Parse(idText)
+	return err == nil && id.String() == idText
+}
+
+func revisionRunImage(digest, tag string) (string, string) {
+	if isLocalBuildTag(tag) {
+		return tag, "never"
+	}
+	image := digest
+	if image == "" {
+		image = tag
+	}
+	return image, ""
+}
+
+func (o *Orchestrator) applyRevisionRunImage(ctx context.Context, d deployments.Deployment, op string, payload map[string]any) {
+	var digest, tag string
+	var revNumber int
+	_ = o.pool.QueryRow(ctx, `
+		SELECT COALESCE(image_digest, ''), COALESCE(image_tag, ''), revision_number
+		FROM revisions WHERE id = $1`, *d.TargetRevisionID).Scan(&digest, &tag, &revNumber)
+	image, pullPolicy := revisionRunImage(digest, tag)
+	if _, ok := payload["image"]; !ok && image != "" {
+		payload["image"] = image
+	}
+	if pullPolicy != "" {
+		if _, ok := payload["pullPolicy"]; !ok {
+			payload["pullPolicy"] = pullPolicy
+		}
+	}
+	if op == protocol.OpDeployRevision && revNumber > 0 {
+		if _, ok := payload["revisionNumber"]; !ok {
+			payload["revisionNumber"] = revNumber
+		}
+	}
+}
+
+func revisionImageIdentity(cfg appConfig, d deployments.Deployment, result map[string]any, simulate bool) (string, string, error) {
+	if cfg.SourceType == "image" {
+		ref := strOr(cfg.ImageReference, "")
+		if ref == "" {
+			return "", "", errors.New("image reference is required")
+		}
+		return ref, ref, nil
+	}
+	if d.TargetRevisionID == nil {
+		return "", "", errors.New("revision is required to tag the built image")
+	}
+	tag := localBuildTag(*d.TargetRevisionID)
+	if result == nil && simulate {
+		return fmt.Sprintf("sha256:sim-%s", d.ID.String()[:8]), tag, nil
+	}
+	imageID, err := acceptBuiltImage(result, tag)
+	if err != nil {
+		return "", "", err
+	}
+	return imageID, tag, nil
+}
+
+func acceptBuiltImage(result map[string]any, tag string) (string, error) {
+	if result == nil {
+		return "", errors.New("build completed without an image id")
+	}
+	imageID, _ := result["imageId"].(string)
+	imageID = strings.TrimSpace(imageID)
+	if imageID == "" {
+		return "", errors.New("build completed without an image id")
+	}
+	if !resultHasTag(result["tags"], tag) {
+		return "", errors.New("build completed without the revision image tag")
+	}
+	return imageID, nil
+}
+
+func resultHasTag(raw any, tag string) bool {
+	switch tags := raw.(type) {
+	case []string:
+		for _, item := range tags {
+			if item == tag {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range tags {
+			value, _ := item.(string)
+			if value == tag {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func strOr(v *string, fallback string) string {
