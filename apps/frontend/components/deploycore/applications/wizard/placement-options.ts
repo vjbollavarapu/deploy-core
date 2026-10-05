@@ -67,3 +67,27 @@ export function placementAfterProjectChange(serverId: string): {
     serverId,
   }
 }
+
+export const PLACEMENT_ORGANIZATION_MISMATCH =
+  'Select a project, environment, and server for this organization.'
+
+/** True only when placement was loaded for the active organization and the selection is in that list. */
+export function placementReadyForOrganization(input: {
+  activeOrganizationId: string
+  loadedOrganizationId: string
+  projectId: string
+  environment: string
+  serverId: string
+  projects: readonly PlacementProjectOption[]
+  servers: readonly PlacementServerOption[]
+}): boolean {
+  if (!input.activeOrganizationId || input.loadedOrganizationId !== input.activeOrganizationId) return false
+  const project = input.projects.find((item) => item.id === input.projectId)
+  if (!project) return false
+  const environment = project.environments.some(
+    (item) => item.id === input.environment || item.name === input.environment,
+  )
+  if (!environment) return false
+  if (!input.serverId) return true
+  return input.servers.some((item) => item.id === input.serverId)
+}

@@ -5,6 +5,7 @@ import {
   environmentOptionLabel,
   environmentSelectItems,
   placementAfterProjectChange,
+  placementReadyForOrganization,
   projectSelectItems,
   serverOptionLabel,
   serverSelectItems,
@@ -70,5 +71,21 @@ describe('placement dropdown labels', () => {
     assert.equal(next.environment, '')
     assert.equal(next.serverId, serverId)
     assert.equal(environmentSelectItems(projects, '99999999-8888-7777-6666-555555555555')[environmentId], undefined)
+  })
+
+  it('rejects placement loaded for another organization', () => {
+    const ready = {
+      activeOrganizationId: 'org-b',
+      loadedOrganizationId: 'org-b',
+      projectId,
+      environment: environmentId,
+      serverId,
+      projects,
+      servers,
+    }
+    assert.equal(placementReadyForOrganization(ready), true)
+    assert.equal(placementReadyForOrganization({ ...ready, loadedOrganizationId: 'org-a' }), false)
+    assert.equal(placementReadyForOrganization({ ...ready, loadedOrganizationId: '' }), false)
+    assert.equal(placementReadyForOrganization({ ...ready, projectId: 'missing-project' }), false)
   })
 })

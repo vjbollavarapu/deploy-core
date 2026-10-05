@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
@@ -40,6 +40,7 @@ import {
 } from './wizard/step-placement'
 import { StepCreate, StepReview } from './wizard/step-review'
 import { StepStorage } from './wizard/step-storage'
+import { placementReadyForOrganization, PLACEMENT_ORGANIZATION_MISMATCH } from './wizard/placement-options'
 import { useWizardGitSource } from './wizard/use-wizard-git-source'
 import {
   apiClient,
@@ -62,6 +63,7 @@ import {
   writeCreateApplicationResume,
   type SavedVolume,
 } from '@/lib/applications/create-application-flow'
+import { wizardCreateSourceConfig } from '@/lib/applications/git-source-wizard'
 
 const STORAGE_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'storage')
 const REVIEW_STEP = WIZARD_STEPS.findIndex((step) => step.id === 'review')
@@ -158,6 +160,7 @@ export function CreateApplicationWizard({
   const [projectsList, setProjectsList] = useState<PlacementProject[]>(fallbackProjects)
   const [serversList, setServersList] = useState<PlacementServer[]>(fallbackServers)
   const [isLoadingPlacement, setIsLoadingPlacement] = useState(false)
+  const placementOrganizationId = useRef('')
 
   const form = useForm<CreateApplicationValues>({
     defaultValues: {
@@ -190,15 +193,20 @@ export function CreateApplicationWizard({
   })
 
   useEffect(() => {
-    if (!open || !activeOrg?.id) return
+    if (!open || !activeOrg?.id) {
+      placementOrganizationId.current = ''
+      return
+    }
 
+    const organizationId = activeOrg.id
+    placementOrganizationId.current = ''
     let cancelled = false
 
     async function loadPlacementData() {
       try {
         const [projRes, servRes] = await Promise.all([
-          apiClient.get<Page<WireProject>>(`/projects?organizationId=${activeOrg?.id}`).catch(() => null),
-          apiClient.get<Page<WireServer>>(`/servers?organizationId=${activeOrg?.id}`).catch(() => null),
+          apiClient.get<Page<WireProject>>(`/projects?organizationId=${organizationId}`).catch(() => null),
+          apiClient.get<Page<WireServer>>(`/servers?organizationId=${organizationId}`).catch(() => null),
         ])
 
         if (cancelled) return
@@ -259,6 +267,7 @@ export function CreateApplicationWizard({
         }
       } finally {
         if (!cancelled) {
+          placementOrganizationId.current = organizationId
           setIsLoadingPlacement(false)
         }
       }
@@ -349,6 +358,24 @@ export function CreateApplicationWizard({
     }
 
     const data = parsed.data
+    const source = wizardCreateSourceConfig({
+      sourceType: toWireSourceType(data.sourceType),
+      repositorySource: data.repositorySource,
+      organizationId: activeOrg?.id ?? '',
+      gitConnectionId: data.gitConnectionId,
+      repositoryId: data.repositoryId,
+      repositoryUrl: data.repository || null,
+      gitBranch: data.branch || null,
+      dockerfilePath: data.dockerfile || null,
+      buildContext: data.buildContext || null,
+      connections: gitSource.connections,
+      repositories: gitSource.repositories,
+    })
+    if (!source.ok) {
+      setServerError(source.message)
+      return
+    }
+
     setPending(true)
 
     try {
@@ -369,6 +396,21 @@ export function CreateApplicationWizard({
       }
 
       if (mode === 'api' && activeOrg?.id) {
+        if (
+          !placementReadyForOrganization({
+            activeOrganizationId: activeOrg.id,
+            loadedOrganizationId: placementOrganizationId.current,
+            projectId: data.projectId,
+            environment: data.environment,
+            serverId: data.serverId,
+            projects: projectsList,
+            servers: serversList,
+          })
+        ) {
+          setServerError(PLACEMENT_ORGANIZATION_MISMATCH)
+          return
+        }
+
         const appPayload = {
           organizationId: activeOrg.id,
           projectId: data.projectId,
@@ -378,11 +420,7 @@ export function CreateApplicationWizard({
           type: toWireApplicationType(data.applicationType),
           targetServerId: isUUID(data.serverId) ? data.serverId : null,
           config: {
-            sourceType: toWireSourceType(data.sourceType),
-            repositoryUrl: data.repository || null,
-            gitBranch: data.branch || null,
-            dockerfilePath: data.dockerfile || null,
-            buildContext: data.buildContext || null,
+            ...source.config,
             imageReference: data.image
               ? data.imageTag
                 ? `${data.image}:${data.imageTag}`
@@ -468,6 +506,11 @@ export function CreateApplicationWizard({
   }
 
   const values = getValues()
+  const gitReview = {
+    organizationId: activeOrg?.id ?? '',
+    connections: gitSource.connections,
+    repositories: gitSource.repositories,
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -548,7 +591,7 @@ export function CreateApplicationWizard({
             />
           )}
           {step === REVIEW_STEP && (
-            <StepReview values={values} projects={projectsList} servers={serversList} />
+            <StepReview values={values} projects={projectsList} servers={serversList} gitReview={gitReview} />
           )}
           {step === CREATE_STEP && (
             <StepCreate
@@ -556,6 +599,7 @@ export function CreateApplicationWizard({
               pending={pending}
               projects={projectsList}
               servers={serversList}
+              gitReview={gitReview}
             />
           )}
         </div>

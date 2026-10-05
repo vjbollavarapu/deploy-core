@@ -8,11 +8,13 @@ import {
   fieldsAfterOrganizationChange,
   fieldsAfterPublicGit,
   fieldsAfterRepositorySelection,
+  gitSourceCreateConfig,
   resetPlacementOnOrganizationChange,
   selectConnectedRepository,
   type ConnectedGitRejection,
   type ConnectedSourceFields,
   type GitSourceConnection,
+  type GitSourceCreateResult,
   type GitSourceRepository,
 } from './git-source'
 
@@ -26,6 +28,7 @@ export const GIT_REPOSITORY_LOADING = 'Loading repositories…'
 export const GIT_REPOSITORY_ERROR = 'Unable to load repositories'
 export const GIT_REPOSITORY_NONE = 'No synchronized repositories'
 export const GIT_REPOSITORY_NONE_HINT = 'Repositories are managed from Git Providers.'
+export const GIT_REVIEW_UNAVAILABLE = 'Unavailable'
 
 export type GitSourceLoadPhase = 'idle' | 'loading' | 'error' | 'ready'
 
@@ -525,5 +528,122 @@ function withConnectedFields<T extends WizardGitFormState>(state: T, fields: Con
     repositoryId: fields.repositoryId,
     repository: fields.repositoryUrl,
     branch: fields.branch,
+  }
+}
+
+export interface WizardCreateSourceInput {
+  sourceType: string
+  repositorySource: RepositorySourceMode
+  organizationId: string
+  gitConnectionId: string
+  repositoryId: string
+  repositoryUrl: string | null
+  gitBranch: string | null
+  dockerfilePath: string | null
+  buildContext: string | null
+  connections: readonly WizardConnectionOption[]
+  repositories: readonly WizardRepositoryOption[]
+}
+
+export interface WizardSourceConfig {
+  sourceType: string
+  repositoryUrl?: string | null
+  gitBranch?: string | null
+  dockerfilePath?: string | null
+  buildContext?: string | null
+  gitConnectionId?: string
+}
+
+/** Final create-boundary source config. Connected Git is validated by gitSourceCreateConfig. */
+export function wizardCreateSourceConfig(
+  input: WizardCreateSourceInput,
+): GitSourceCreateResult<WizardSourceConfig> {
+  const base: WizardSourceConfig = {
+    sourceType: input.sourceType,
+    repositoryUrl: input.repositoryUrl,
+    gitBranch: input.gitBranch,
+    dockerfilePath: input.dockerfilePath,
+    buildContext: input.buildContext,
+  }
+  if (input.repositorySource !== 'connected' || input.sourceType !== 'git') {
+    return gitSourceCreateConfig(base, { repositorySource: 'public' })
+  }
+  const listed = input.connections.find((item) => item.id === input.gitConnectionId)
+  const connection = listed
+    ? connectionFromOption(listed)
+    : { id: input.gitConnectionId, organizationId: '' }
+  return gitSourceCreateConfig(base, {
+    repositorySource: 'connected',
+    organizationId: input.organizationId,
+    connection,
+    repository: repositoryForSubmit(input.repositories, input.repositoryId),
+  })
+}
+
+export interface WizardGitReviewInput {
+  sourceType: string
+  repositorySource: RepositorySourceMode
+  organizationId: string
+  gitConnectionId: string
+  repositoryId: string
+  repository: string
+  branch: string
+  dockerfile: string
+  buildContext: string
+  connections: readonly WizardConnectionOption[]
+  repositories: readonly WizardRepositoryOption[]
+}
+
+export interface WizardGitReviewRow {
+  label: string
+  value: string
+}
+
+export function wizardGitReviewRows(input: WizardGitReviewInput): WizardGitReviewRow[] {
+  if (input.sourceType !== 'git') return []
+  const buildRows = [
+    { label: 'Branch', value: input.branch },
+    { label: 'Dockerfile', value: input.dockerfile },
+    { label: 'Build context', value: input.buildContext },
+  ]
+  if (input.repositorySource !== 'connected') {
+    return [
+      { label: 'Repository source', value: 'Public Git URL' },
+      { label: 'Repository', value: input.repository },
+      ...buildRows,
+    ]
+  }
+  const connection = input.connections.find(
+    (item) => item.id === input.gitConnectionId && item.organizationId === input.organizationId && input.organizationId.length > 0,
+  )
+  const repository = input.repositories.find((item) => item.id === input.repositoryId && item.selection)
+  return [
+    { label: 'Repository source', value: 'Connected repository' },
+    { label: 'Connection', value: connection?.label ?? GIT_REVIEW_UNAVAILABLE },
+    { label: 'Repository', value: repository?.label ?? GIT_REVIEW_UNAVAILABLE },
+    ...buildRows,
+  ]
+}
+
+export function wizardDisplayedGitSource(input: WizardGitReviewInput): string {
+  if (input.repositorySource === 'connected') {
+    const repository =
+      wizardGitReviewRows(input).find((row) => row.label === 'Repository')?.value ?? GIT_REVIEW_UNAVAILABLE
+    return `${repository}:${input.branch}`
+  }
+  return `${input.repository}:${input.branch}`
+}
+
+function repositoryForSubmit(
+  repositories: readonly WizardRepositoryOption[],
+  repositoryId: string,
+): GitSourceRepository {
+  const match = repositories.find((item) => item.id === repositoryId)
+  if (match?.selection) return match.selection
+  return {
+    id: repositoryId,
+    connectionId: '',
+    organizationId: '',
+    cloneUrl: '',
   }
 }

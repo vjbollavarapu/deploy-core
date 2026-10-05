@@ -8,6 +8,12 @@ import { getDemoFixtures } from '@/lib/mock-isolation'
 const mockProjects = getDemoFixtures(rawMockProjects)
 const mockServers = getDemoFixtures(rawMockServers)
 import {
+  wizardDisplayedGitSource,
+  wizardGitReviewRows,
+  type WizardConnectionOption,
+  type WizardRepositoryOption,
+} from '@/lib/applications/git-source-wizard'
+import {
   healthCheckSummary,
   sourceTypeLabel,
   storageSummary,
@@ -16,10 +22,33 @@ import {
 import type { PlacementProject, PlacementServer } from './step-placement'
 import { Loader2 } from 'lucide-react'
 
+interface GitReviewContext {
+  organizationId: string
+  connections: readonly WizardConnectionOption[]
+  repositories: readonly WizardRepositoryOption[]
+}
+
 interface StepReviewProps {
   values: CreateApplicationValues
   projects?: PlacementProject[]
   servers?: PlacementServer[]
+  gitReview?: GitReviewContext
+}
+
+function gitReviewInput(values: CreateApplicationValues, gitReview?: GitReviewContext) {
+  return {
+    sourceType: values.sourceType,
+    repositorySource: values.repositorySource,
+    organizationId: gitReview?.organizationId ?? '',
+    gitConnectionId: values.gitConnectionId,
+    repositoryId: values.repositoryId,
+    repository: values.repository,
+    branch: values.branch,
+    dockerfile: values.dockerfile,
+    buildContext: values.buildContext,
+    connections: gitReview?.connections ?? [],
+    repositories: gitReview?.repositories ?? [],
+  }
 }
 
 function SummaryRow({ label, value }: { label: string; value: string }) {
@@ -31,7 +60,7 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-export function StepReview({ values, projects = [], servers = [] }: StepReviewProps) {
+export function StepReview({ values, projects = [], servers = [], gitReview }: StepReviewProps) {
   const project =
     projects.find((item) => item.id === values.projectId) ??
     mockProjects.find((item) => item.id === values.projectId)
@@ -56,14 +85,10 @@ export function StepReview({ values, projects = [], servers = [] }: StepReviewPr
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
           <SummaryRow label="Type" value={sourceTypeLabel(values.sourceType)} />
-          {values.sourceType === 'git' && (
-            <>
-              <SummaryRow label="Repository" value={values.repository} />
-              <SummaryRow label="Branch" value={values.branch} />
-              <SummaryRow label="Dockerfile" value={values.dockerfile} />
-              <SummaryRow label="Build context" value={values.buildContext} />
-            </>
-          )}
+          {values.sourceType === 'git' &&
+            wizardGitReviewRows(gitReviewInput(values, gitReview)).map((row) => (
+              <SummaryRow key={row.label} label={row.label} value={row.value} />
+            ))}
           {values.sourceType === 'docker-image' && (
             <>
               <SummaryRow label="Image" value={values.image} />
@@ -138,9 +163,10 @@ interface StepCreateProps {
   pending: boolean
   projects?: PlacementProject[]
   servers?: PlacementServer[]
+  gitReview?: GitReviewContext
 }
 
-export function StepCreate({ values, pending, projects = [], servers = [] }: StepCreateProps) {
+export function StepCreate({ values, pending, projects = [], servers = [], gitReview }: StepCreateProps) {
   const project =
     projects.find((item) => item.id === values.projectId) ??
     mockProjects.find((item) => item.id === values.projectId)
@@ -159,7 +185,7 @@ export function StepCreate({ values, pending, projects = [], servers = [] }: Ste
 
   const sourceRef =
     values.sourceType === 'git'
-      ? `${values.repository}:${values.branch}`
+      ? wizardDisplayedGitSource(gitReviewInput(values, gitReview))
       : values.sourceType === 'docker-image'
         ? `${values.image}:${values.imageTag}`
         : `${values.repository} (${values.composeFile})`
