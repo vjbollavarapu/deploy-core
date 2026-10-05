@@ -40,6 +40,7 @@ import {
 } from './wizard/step-placement'
 import { StepCreate, StepReview } from './wizard/step-review'
 import { StepStorage } from './wizard/step-storage'
+import { useWizardGitSource } from './wizard/use-wizard-git-source'
 import {
   apiClient,
   ApiError,
@@ -179,6 +180,14 @@ export function CreateApplicationWizard({
     watch,
     formState: { errors },
   } = form
+
+  const gitSource = useWizardGitSource({
+    open,
+    organizationId: activeOrg?.id ?? '',
+    control,
+    getValues,
+    setValue,
+  })
 
   useEffect(() => {
     if (!open || !activeOrg?.id) return
@@ -494,8 +503,18 @@ export function CreateApplicationWizard({
         />
 
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-          {step === 0 && <StepSource setValue={setValue} watch={watch} errors={errors} />}
-          {step === 1 && <StepSourceConfig register={register} watch={watch} errors={errors} />}
+          {step === 0 && (
+            <StepSource watch={watch} errors={errors} onSourceType={gitSource.selectSourceType} />
+          )}
+          {step === 1 && (
+            <StepSourceConfig
+              register={register}
+              control={control}
+              watch={watch}
+              errors={errors}
+              gitSource={gitSource}
+            />
+          )}
           {step === 2 && <StepRuntime register={register} control={control} errors={errors} />}
           {step === 3 && (
             <StepConfiguration

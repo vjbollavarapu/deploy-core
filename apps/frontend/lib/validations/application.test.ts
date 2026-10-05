@@ -7,6 +7,7 @@ import {
   healthCheckRequest,
   healthCheckSummary,
   networkingStepSchema,
+  sourceConfigStepSchema,
   storageStepSchema,
   storageSummary,
 } from './application'
@@ -101,5 +102,65 @@ describe('wizard storage', () => {
       volumes: [{ name: 'redis-data', mountPath: 'data', writable: false }],
     })
     assert.equal(storage.success, false)
+  })
+})
+
+describe('wizard git source validation', () => {
+  const placement = {
+    name: 'api',
+    projectId: 'project-1',
+    environment: 'production',
+    serverId: 'server-1',
+  }
+
+  it('requires a connection and repository for connected Git', () => {
+    const missing = sourceConfigStepSchema.safeParse({
+      ...DEFAULT_APPLICATION_VALUES,
+      sourceType: 'git',
+      repositorySource: 'connected',
+    })
+    assert.equal(missing.success, false)
+    const paths = missing.error?.issues.map((issue) => issue.path[0])
+    assert.equal(paths?.includes('gitConnectionId'), true)
+    assert.equal(paths?.includes('repositoryId'), true)
+    assert.equal(paths?.includes('repository'), false)
+
+    const selected = createApplicationSchema.safeParse({
+      ...DEFAULT_APPLICATION_VALUES,
+      ...placement,
+      sourceType: 'git',
+      repositorySource: 'connected',
+      gitConnectionId: '550e8400-e29b-41d4-a716-446655440000',
+      repositoryId: '550e8400-e29b-41d4-a716-446655440010',
+      repository: 'https://github.com/acme/api.git',
+      branch: 'develop',
+    })
+    assert.equal(selected.success, true, JSON.stringify(selected.error?.issues))
+  })
+
+  it('keeps public Git, image, and Compose validation independent of a connection', () => {
+    const publicGit = createApplicationSchema.safeParse({
+      ...DEFAULT_APPLICATION_VALUES,
+      ...placement,
+      sourceType: 'git',
+      repositorySource: 'public',
+      repository: 'github.com/acme/api',
+    })
+    assert.equal(publicGit.success, true, JSON.stringify(publicGit.error?.issues))
+
+    const image = createApplicationSchema.safeParse({
+      ...redisPlacement,
+      healthCheckPath: '',
+    })
+    assert.equal(image.success, true, JSON.stringify(image.error?.issues))
+
+    const compose = createApplicationSchema.safeParse({
+      ...DEFAULT_APPLICATION_VALUES,
+      ...placement,
+      sourceType: 'docker-compose',
+      repositorySource: 'connected',
+      repository: 'github.com/acme/stack',
+    })
+    assert.equal(compose.success, true, JSON.stringify(compose.error?.issues))
   })
 })

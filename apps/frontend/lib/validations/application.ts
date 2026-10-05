@@ -3,6 +3,9 @@ import { z } from 'zod'
 export const SOURCE_TYPES = ['git', 'docker-image', 'docker-compose'] as const
 export type SourceType = (typeof SOURCE_TYPES)[number]
 
+export const REPOSITORY_SOURCES = ['connected', 'public'] as const
+export type RepositorySourceMode = (typeof REPOSITORY_SOURCES)[number]
+
 export const APPLICATION_TYPES = [
   'Web Service',
   'API',
@@ -22,6 +25,9 @@ export const sourceStepSchema = z.object({
 export const sourceConfigStepSchema = z
   .object({
     sourceType: z.enum(SOURCE_TYPES),
+    repositorySource: z.enum(REPOSITORY_SOURCES),
+    gitConnectionId: z.string().trim(),
+    repositoryId: z.string().trim(),
     repository: z.string().trim(),
     branch: z.string().trim(),
     dockerfile: z.string().trim(),
@@ -31,7 +37,23 @@ export const sourceConfigStepSchema = z
     composeFile: z.string().trim(),
   })
   .superRefine((values, ctx) => {
-    if (values.sourceType === 'git') {
+    if (values.sourceType === 'git' && values.repositorySource === 'connected') {
+      if (values.gitConnectionId.length < 1) {
+        ctx.addIssue({ code: 'custom', path: ['gitConnectionId'], message: 'Select a Git connection' })
+      }
+      if (values.repositoryId.length < 1 || values.repository.length < 3) {
+        ctx.addIssue({ code: 'custom', path: ['repositoryId'], message: 'Select a repository' })
+      }
+      if (values.branch.length < 1) {
+        ctx.addIssue({ code: 'custom', path: ['branch'], message: 'Branch is required' })
+      }
+      if (values.dockerfile.length < 1) {
+        ctx.addIssue({ code: 'custom', path: ['dockerfile'], message: 'Dockerfile path is required' })
+      }
+      if (values.buildContext.length < 1) {
+        ctx.addIssue({ code: 'custom', path: ['buildContext'], message: 'Build context is required' })
+      }
+    } else if (values.sourceType === 'git') {
       if (values.repository.length < 3) {
         ctx.addIssue({ code: 'custom', path: ['repository'], message: 'Repository is required' })
       }
@@ -182,6 +204,9 @@ export function storageSummary(
 export const createApplicationSchema = z
   .object({
     sourceType: z.enum(SOURCE_TYPES),
+    repositorySource: z.enum(REPOSITORY_SOURCES),
+    gitConnectionId: z.string(),
+    repositoryId: z.string(),
     repository: z.string(),
     branch: z.string(),
     dockerfile: z.string(),
@@ -245,6 +270,9 @@ export const WIZARD_STEPS = [
 
 export const DEFAULT_APPLICATION_VALUES: CreateApplicationValues = {
   sourceType: 'git',
+  repositorySource: 'public',
+  gitConnectionId: '',
+  repositoryId: '',
   repository: '',
   branch: 'main',
   dockerfile: 'Dockerfile',
