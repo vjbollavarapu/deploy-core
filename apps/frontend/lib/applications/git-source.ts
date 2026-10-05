@@ -91,6 +91,7 @@ const CLONE_URL_CREDENTIAL_QUERY_KEYS = new Set([
   'authorization',
   'password',
   'passwd',
+  'credential',
   'key',
   'api_key',
   'apikey',
@@ -118,6 +119,38 @@ export function credentialFreeCloneUrl(url: string | null | undefined): string |
     if (CLONE_URL_CREDENTIAL_QUERY_KEYS.has(name.toLowerCase())) return null
   }
   return href
+}
+
+/** Credential query names, including a schemeless repository string such as host/path?token=secret. */
+export function repositoryHasCredentialQuery(value: string | null | undefined): boolean {
+  const trimmed = value?.trim() ?? ''
+  if (!trimmed) return false
+  if (urlHasCredentialQuery(trimmed)) return true
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return false
+  return urlHasCredentialQuery(`https://${trimmed}`) || queryTextHasCredentialName(trimmed)
+}
+
+function urlHasCredentialQuery(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    for (const name of parsed.searchParams.keys()) {
+      if (CLONE_URL_CREDENTIAL_QUERY_KEYS.has(name.toLowerCase())) return true
+    }
+  } catch {
+    return queryTextHasCredentialName(value)
+  }
+  return false
+}
+
+function queryTextHasCredentialName(value: string): boolean {
+  const start = value.indexOf('?')
+  if (start < 0) return false
+  const query = value.slice(start + 1).split('#')[0]
+  const params = new URLSearchParams(query)
+  for (const name of params.keys()) {
+    if (CLONE_URL_CREDENTIAL_QUERY_KEYS.has(name.toLowerCase())) return true
+  }
+  return false
 }
 
 export function gitConnectionListRequest(

@@ -4,7 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { DetailList } from '@/components/platform/detail-list'
 import { MetricCard } from '@/components/platform/metric-card'
 import { StatusBadge } from '@/components/platform/status-badge'
+import { ApplicationSourceValue } from '@/components/deploycore/applications/application-source-value'
 import { useProductionApplication } from '@/components/deploycore/applications/production-application-shell'
+import { useApplicationSourceRows } from '@/components/deploycore/applications/use-application-source-display'
 import { getStatusConfig } from '@/lib/status'
 import type { Status } from '@/lib/types'
 
@@ -16,9 +18,9 @@ function show(value: string | number | null | undefined): string {
 
 export function ProductionApplicationOverview() {
   const application = useProductionApplication()
+  const sourceRows = useApplicationSourceRows(application, 'summary')
   if (!application) return null
 
-  const source = application.repositoryUrl ?? application.imageReference
   const statusLabel = getStatusConfig(application.status as Status).label
 
   return (
@@ -46,8 +48,10 @@ export function ProductionApplicationOverview() {
               { label: 'Project', value: show(application.projectName ?? application.projectId) },
               { label: 'Environment', value: show(application.environmentName ?? application.environmentId) },
               { label: 'Server', value: show(application.serverName ?? application.serverId) },
-              { label: 'Source', value: <span className="font-mono text-xs">{show(source)}</span> },
-              { label: 'Branch', value: show(application.gitBranch) },
+              ...sourceRows.map((row) => ({
+                label: row.label,
+                value: <ApplicationSourceValue row={row} />,
+              })),
               {
                 label: 'CPU limit',
                 value: application.cpuLimitMillis == null ? '—' : `${application.cpuLimitMillis} ms`,

@@ -6,6 +6,7 @@ import { Braces, FileQuestion, GitBranch, KeyRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApplicationLogsPanel } from '@/components/deploycore/applications/application-logs-panel'
 import { ApplicationSettingsPanel } from '@/components/deploycore/applications/application-settings-panel'
+import { useApplicationSourceRows } from '@/components/deploycore/applications/use-application-source-display'
 import { useProductionApplication } from '@/components/deploycore/applications/production-application-shell'
 import { EmptyState } from '@/components/platform/empty-state'
 import { ErrorState } from '@/components/platform/error-state'
@@ -78,9 +79,7 @@ export function ProductionApplicationSection({ section }: { section: string }) {
     )
   }
   if (section === 'settings') {
-    return (
-      <ApplicationSettingsPanel application={toSettingsApplication(application)} />
-    )
+    return <ProductionApplicationSettings />
   }
   if (section === 'networking') {
     return (
@@ -106,6 +105,13 @@ export function ProductionApplicationSection({ section }: { section: string }) {
       description="This application section is not available."
     />
   )
+}
+
+function ProductionApplicationSettings() {
+  const application = useProductionApplication()
+  const sourceRows = useApplicationSourceRows(application, 'detail')
+  if (!application) return null
+  return <ApplicationSettingsPanel application={toSettingsApplication(application)} sourceRows={sourceRows} />
 }
 
 function DeploymentsSection({ applicationId }: { applicationId: string }) {

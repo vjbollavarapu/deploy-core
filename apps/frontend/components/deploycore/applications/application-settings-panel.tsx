@@ -9,9 +9,12 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { DetailList } from '@/components/platform/detail-list'
 import { DestructiveConfirmDialog } from '@/components/platform/destructive-confirm-dialog'
+import { ApplicationSourceValue } from '@/components/deploycore/applications/application-source-value'
+import type { SourceDisplayRow } from '@/lib/applications/application-source-display'
 import { apiClient, ApiError } from '@/lib/api'
 
 interface ApplicationSettingsPanelProps {
+  sourceRows?: SourceDisplayRow[]
   application: {
     id: string
     name: string
@@ -25,7 +28,7 @@ interface ApplicationSettingsPanelProps {
   }
 }
 
-export function ApplicationSettingsPanel({ application }: ApplicationSettingsPanelProps) {
+export function ApplicationSettingsPanel({ application, sourceRows }: ApplicationSettingsPanelProps) {
   const router = useRouter()
   const [openDelete, setOpenDelete] = useState(false)
 
@@ -53,8 +56,15 @@ export function ApplicationSettingsPanel({ application }: ApplicationSettingsPan
               { label: 'Environment', value: application.environment },
               { label: 'Server', value: application.server },
               { label: 'Instances', value: String(application.instances) },
-              { label: 'Repository', value: application.repo },
-              { label: 'Branch', value: application.branch },
+              ...(sourceRows
+                ? sourceRows.map((row) => ({
+                    label: row.label,
+                    value: <ApplicationSourceValue row={row} />,
+                  }))
+                : [
+                    { label: 'Repository', value: application.repo },
+                    { label: 'Branch', value: application.branch },
+                  ]),
             ]}
           />
         </CardContent>
