@@ -6,7 +6,7 @@ import { Braces, FileQuestion, GitBranch, KeyRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApplicationLogsPanel } from '@/components/deploycore/applications/application-logs-panel'
 import { ApplicationSettingsPanel } from '@/components/deploycore/applications/application-settings-panel'
-import { useApplicationSourceRows } from '@/components/deploycore/applications/use-application-source-display'
+import { ApplicationSourceEditor } from '@/components/deploycore/applications/application-source-editor'
 import { useProductionApplication } from '@/components/deploycore/applications/production-application-shell'
 import { EmptyState } from '@/components/platform/empty-state'
 import { ErrorState } from '@/components/platform/error-state'
@@ -109,9 +109,13 @@ export function ProductionApplicationSection({ section }: { section: string }) {
 
 function ProductionApplicationSettings() {
   const application = useProductionApplication()
-  const sourceRows = useApplicationSourceRows(application, 'detail')
   if (!application) return null
-  return <ApplicationSettingsPanel application={toSettingsApplication(application)} sourceRows={sourceRows} />
+  return (
+    <div className="flex flex-col gap-4">
+      <ApplicationSourceEditor key={application.id} application={application} />
+      <ApplicationSettingsPanel application={toSettingsApplication(application)} sourceRows={[]} />
+    </div>
+  )
 }
 
 function DeploymentsSection({ applicationId }: { applicationId: string }) {

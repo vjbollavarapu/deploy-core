@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { GitBranch } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -12,13 +12,19 @@ import { PageContainer } from '@/components/platform/page-container'
 import { ResourceHeader } from '@/components/platform/resource-header'
 import { StatusBadge } from '@/components/platform/status-badge'
 import { apiClient } from '@/lib/api'
+import { useOrganization } from '@/lib/auth-context'
 import { loadProductionApplication, type ApplicationDetail } from '@/lib/control-plane/detail-read'
 import type { Status } from '@/lib/types'
 
 const ApplicationDetailContext = createContext<ApplicationDetail | null>(null)
+const ReloadApplicationContext = createContext<(() => Promise<ApplicationDetail | null>) | null>(null)
 
 export function useProductionApplication(): ApplicationDetail | null {
   return useContext(ApplicationDetailContext)
+}
+
+export function useReloadProductionApplication(): (() => Promise<ApplicationDetail | null>) | null {
+  return useContext(ReloadApplicationContext)
 }
 
 function show(value: string | null | undefined): string {
@@ -36,6 +42,34 @@ export function ProductionApplicationShell({
   const [phase, setPhase] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const { activeOrg } = useOrganization()
+  const applicationIdRef = useRef(applicationId)
+  const organizationIdRef = useRef(activeOrg?.id ?? '')
+
+  const reload = useCallback(async () => {
+    const requestedApplicationId = applicationIdRef.current
+    const requestedOrganizationId = organizationIdRef.current
+    const result = await loadProductionApplication(apiClient, requestedApplicationId)
+    if (
+      applicationIdRef.current !== requestedApplicationId ||
+      organizationIdRef.current !== requestedOrganizationId ||
+      result.kind !== 'ok'
+    ) {
+      return null
+    }
+    if (requestedOrganizationId && result.value.organizationId && result.value.organizationId !== requestedOrganizationId) {
+      return null
+    }
+    setApplication(result.value)
+    setError(null)
+    setPhase('ready')
+    return result.value
+  }, [])
+
+  useEffect(() => {
+    applicationIdRef.current = applicationId
+    organizationIdRef.current = activeOrg?.id ?? ''
+  }, [activeOrg?.id, applicationId])
 
   useEffect(() => {
     let cancelled = false
@@ -100,6 +134,7 @@ export function ProductionApplicationShell({
 
   return (
     <ApplicationDetailContext.Provider value={application}>
+      <ReloadApplicationContext.Provider value={reload}>
       <PageContainer density="wide">
         <ResourceHeader
           title={application.name}
@@ -145,6 +180,7 @@ export function ProductionApplicationShell({
         <ApplicationSubnav applicationId={applicationId} />
         {children}
       </PageContainer>
+      </ReloadApplicationContext.Provider>
     </ApplicationDetailContext.Provider>
   )
 }
