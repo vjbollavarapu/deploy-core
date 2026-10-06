@@ -178,7 +178,11 @@ export function AddDomainDialog({
                 onValueChange={(val) => selectApplication(val ?? '')}
               >
                 <SelectTrigger id="app-select" className="w-full">
-                  <SelectValue placeholder="Select target application" />
+                  <SelectValue placeholder="Select target application">
+                    {(value) =>
+                      applications.find((app) => app.id === value)?.name ?? 'Select target application'
+                    }
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {applications.map((app) => (
