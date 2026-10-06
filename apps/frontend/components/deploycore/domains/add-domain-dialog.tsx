@@ -182,7 +182,7 @@ export function AddDomainDialog({
                 </SelectTrigger>
                 <SelectContent>
                   {applications.map((app) => (
-                    <SelectItem key={app.id} value={app.id}>
+                    <SelectItem key={app.id} value={app.id} label={app.name}>
                       {app.name}
                     </SelectItem>
                   ))}
