@@ -11,6 +11,7 @@ import {
   domainCreateErrorMessage,
   domainsListPath,
   loadProductionDomains,
+  serversListPath,
   type DomainReadClient,
 } from './domain-read'
 
@@ -23,6 +24,7 @@ describe('production domains', () => {
     const org = 'org/with space'
     assert.equal(domainsListPath(org), '/domains?organizationId=org%2Fwith%20space')
     assert.equal(applicationsListPath(org), '/applications?organizationId=org%2Fwith%20space')
+    assert.equal(serversListPath(org), '/servers?organizationId=org%2Fwith%20space')
   })
 
   it('loads Page items and maps each domain to its application', async () => {
@@ -54,11 +56,29 @@ describe('production domains', () => {
             ],
           } as T
         }
+        if (path.startsWith('/applications?')) {
+          return {
+            items: [
+              {
+                id: APP_ID,
+                name: 'Modulyn',
+                targetServerId: 'srv-1',
+                config: { internalPort: 8000 },
+              },
+              { id: '  ', name: 'Skipped' },
+              { name: 'Missing id' },
+            ],
+            limit: 50,
+            offset: 0,
+          } as T
+        }
         return {
           items: [
-            { id: APP_ID, name: 'Modulyn', config: { internalPort: 8000 } },
-            { id: '  ', name: 'Skipped' },
-            { name: 'Missing id' },
+            {
+              id: 'srv-1',
+              name: 'oci-validation-01',
+              publicIp: '207.211.171.15',
+            },
           ],
           limit: 50,
           offset: 0,
@@ -70,15 +90,27 @@ describe('production domains', () => {
     assert.deepEqual(calls, [
       `/domains?organizationId=${ORG_ID}`,
       `/applications?organizationId=${ORG_ID}`,
+      `/servers?organizationId=${ORG_ID}`,
     ])
     assert.deepEqual(loaded.applications, [
-      { id: APP_ID, name: 'Modulyn', internalPort: 8000 },
+      {
+        id: APP_ID,
+        name: 'Modulyn',
+        internalPort: 8000,
+        targetServerId: 'srv-1',
+        dnsTarget: '207.211.171.15',
+      },
     ])
     assert.equal(loaded.domains.length, 2)
     assert.equal(loaded.domains[0]?.application, 'Modulyn')
     assert.equal(loaded.domains[0]?.domain, 'api.example.com')
     assert.equal(loaded.domains[0]?.routingPort, 8000)
     assert.equal(loaded.domains[0]?.status, 'healthy')
+    assert.deepEqual(loaded.domains[0]?.requiredRecord, {
+      type: 'A',
+      name: 'api.example.com',
+      value: '207.211.171.15',
+    })
     assert.equal(loaded.domains[1]?.application, 'Unknown')
     assert.equal(loaded.domains[1]?.status, 'pending')
   })
@@ -108,8 +140,20 @@ describe('production domains', () => {
 
   it('derives the default routing port from the selected application', () => {
     const applications = [
-      { id: APP_ID, name: 'Modulyn', internalPort: 8000 },
-      { id: OTHER_APP_ID, name: 'Worker', internalPort: null },
+      {
+        id: APP_ID,
+        name: 'Modulyn',
+        internalPort: 8000,
+        targetServerId: 'srv-1',
+        dnsTarget: '207.211.171.15',
+      },
+      {
+        id: OTHER_APP_ID,
+        name: 'Worker',
+        internalPort: null,
+        targetServerId: null,
+        dnsTarget: null,
+      },
     ]
     assert.deepEqual(buildAddDomainDefaults(applications, APP_ID), {
       applicationId: APP_ID,

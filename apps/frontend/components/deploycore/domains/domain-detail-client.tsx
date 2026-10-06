@@ -37,8 +37,11 @@ export function DomainDetailClient({ domain: initialDomain }: DomainDetailClient
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  const matched = dnsMatches(domain)
-  const expected = `${domain.requiredRecord.type} ${domain.requiredRecord.name} → ${domain.requiredRecord.value}`
+  const hasDnsTarget = Boolean(domain.requiredRecord.value.trim())
+  const matched = hasDnsTarget && dnsMatches(domain)
+  const expected = hasDnsTarget
+    ? `${domain.requiredRecord.type} ${domain.requiredRecord.name} → ${domain.requiredRecord.value}`
+    : 'DNS target unavailable'
   const observed = domain.detectedRecord
     ? `${domain.detectedRecord.type} ${domain.detectedRecord.name} → ${domain.detectedRecord.value}`
     : 'No record detected'
@@ -173,8 +176,9 @@ export function DomainDetailClient({ domain: initialDomain }: DomainDetailClient
             <div className="grid gap-4 sm:grid-cols-2">
               <DnsCard
                 title="Expected DNS"
-                record={domain.requiredRecord}
-                tone="neutral"
+                record={hasDnsTarget ? domain.requiredRecord : null}
+                tone={hasDnsTarget ? 'neutral' : 'critical'}
+                emptyMessage="DNS target unavailable. Assign this application to a server with a public IP."
               />
               <DnsCard
                 title="Observed DNS"

@@ -129,7 +129,13 @@ export function AddDomainDialog({
     }
   }
 
-  const dnsCnameInstruction = `Type:  CNAME\nName:  ${domainValue.trim() || 'api.yourdomain.com'}\nValue: proxy.deploycore.io`
+  const selectedApplication = applications.find(
+    (application) => application.id === applicationIdValue,
+  )
+  const dnsTarget = selectedApplication?.dnsTarget ?? null
+  const dnsInstruction = dnsTarget
+    ? `Type:  A\nName:  ${domainValue.trim() || 'api.yourdomain.com'}\nValue: ${dnsTarget}`
+    : null
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -243,10 +249,19 @@ export function AddDomainDialog({
 
           <div className="space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">Required DNS record</span>
-            <CodeBlock code={dnsCnameInstruction} label="DNS configuration" />
-            <p className="text-xs text-muted-foreground">
-              Add this CNAME record with your domain DNS registrar (e.g. Cloudflare, Route53, Namecheap).
-            </p>
+            {dnsInstruction ? (
+              <>
+                <CodeBlock code={dnsInstruction} label="DNS configuration" />
+                <p className="text-xs text-muted-foreground">
+                  Add this A record with your domain DNS registrar (e.g. Cloudflare, Route53, Namecheap).
+                </p>
+              </>
+            ) : (
+              <p className="rounded-md border border-border p-3 text-xs text-muted-foreground">
+                DNS target unavailable. Assign the application to a server with a public IP before
+                configuring its DNS record.
+              </p>
+            )}
           </div>
 
           <DialogFooter className="pt-2">

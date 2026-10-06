@@ -1,6 +1,6 @@
 /** Production domain list and create requests. No mock fallback. */
 
-import type { Application, Domain, Page } from '@/lib/api/contract'
+import type { Application, Domain, Page, Server } from '@/lib/api/contract'
 import { DEFAULT_ADD_DOMAIN_VALUES } from '@/lib/validations/domain'
 import type { DomainRecord, DomainTlsState } from '@/lib/types'
 
@@ -13,6 +13,8 @@ export interface DomainApplicationOption {
   id: string
   name: string
   internalPort: number | null
+  targetServerId: string | null
+  dnsTarget: string | null
 }
 
 export interface CreateProductionDomainInput {
@@ -40,6 +42,10 @@ export function applicationsListPath(organizationId: string): string {
   return `/applications?organizationId=${encodeURIComponent(organizationId)}`
 }
 
+export function serversListPath(organizationId: string): string {
+  return `/servers?organizationId=${encodeURIComponent(organizationId)}`
+}
+
 export function createDomainPath(applicationId: string): string {
   return `/applications/${encodeURIComponent(applicationId)}/domains`
 }
@@ -53,16 +59,31 @@ export function applicationInternalPort(value: unknown): number | null {
 
 export function domainApplicationOptions(
   items: Application[] | null | undefined,
+  servers: Server[] | null | undefined = [],
 ): DomainApplicationOption[] {
   if (!Array.isArray(items)) return []
+
+  const publicIps = new Map(
+    (Array.isArray(servers) ? servers : [])
+      .map((server) => [server.id?.trim(), server.publicIp?.trim()] as const)
+      .filter(
+        (entry): entry is readonly [string, string] =>
+          Boolean(entry[0]) && Boolean(entry[1]),
+      ),
+  )
+
   const options: DomainApplicationOption[] = []
   for (const item of items) {
     const id = item.id?.trim()
     if (!id) continue
+
+    const targetServerId = item.targetServerId?.trim() || null
     options.push({
       id,
       name: item.name?.trim() || 'Untitled',
       internalPort: applicationInternalPort(item.config?.internalPort),
+      targetServerId,
+      dnsTarget: targetServerId ? publicIps.get(targetServerId) ?? null : null,
     })
   }
   return options
@@ -105,16 +126,19 @@ export function mapProductionDomainRecords(
   domains: Domain[] | null | undefined,
   applications: readonly DomainApplicationOption[],
 ): DomainRecord[] {
-  const names = new Map(applications.map((application) => [application.id, application.name]))
+  const applicationById = new Map(
+    applications.map((application) => [application.id, application]),
+  )
   if (!Array.isArray(domains)) return []
   return domains.map((domain) => {
     const applicationId = domain.applicationId ?? ''
     const hostname = domain.hostname ?? ''
+    const application = applicationById.get(applicationId)
     return {
       id: domain.id ?? '',
       domain: hostname,
       applicationId,
-      application: names.get(applicationId) || 'Unknown',
+      application: application?.name || 'Unknown',
       environment: 'production',
       routingPort: domain.internalPort ?? 0,
       dnsVerified: domain.dnsStatus === 'VALID',
@@ -130,7 +154,11 @@ export function mapProductionDomainRecords(
       validationMessage: '',
       primary: domain.isPrimary === true,
       forceHttps: domain.forceHttps === true,
-      requiredRecord: { type: 'CNAME', name: hostname, value: 'proxy.deploycore.io' },
+      requiredRecord: {
+        type: 'A',
+        name: hostname,
+        value: application?.dnsTarget ?? '',
+      },
       detectedRecord: null,
       redirectRules: [],
     }
@@ -141,11 +169,15 @@ export async function loadProductionDomains(
   client: Pick<DomainReadClient, 'get'>,
   organizationId: string,
 ): Promise<{ domains: DomainRecord[]; applications: DomainApplicationOption[] }> {
-  const [domainResponse, applicationResponse] = await Promise.all([
+  const [domainResponse, applicationResponse, serverResponse] = await Promise.all([
     client.get<{ domains?: Domain[] | null }>(domainsListPath(organizationId)),
     client.get<Page<Application>>(applicationsListPath(organizationId)),
+    client.get<Page<Server>>(serversListPath(organizationId)),
   ])
-  const applications = domainApplicationOptions(applicationResponse?.items)
+  const applications = domainApplicationOptions(
+    applicationResponse?.items,
+    serverResponse?.items,
+  )
   return {
     applications,
     domains: mapProductionDomainRecords(domainResponse?.domains, applications),
