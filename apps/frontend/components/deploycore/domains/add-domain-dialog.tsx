@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Globe, Plus, ShieldCheck } from 'lucide-react'
@@ -22,10 +22,12 @@ import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { CodeBlock } from '@/components/platform/code-block'
 import { apiClient } from '@/lib/api'
-import { applications as rawApplications } from '@/lib/mock-data'
-import { getDemoFixtures } from '@/lib/mock-isolation'
-
-const applications = getDemoFixtures(rawApplications)
+import {
+  buildAddDomainDefaults,
+  createProductionDomain,
+  domainCreateErrorMessage,
+  type DomainApplicationOption,
+} from '@/lib/control-plane/domain-read'
 import {
   addDomainSchema,
   DEFAULT_ADD_DOMAIN_VALUES,
@@ -33,23 +35,33 @@ import {
 } from '@/lib/validations/domain'
 
 interface AddDomainDialogProps {
+  applications: readonly DomainApplicationOption[]
   onSuccess?: () => void
   defaultApplicationId?: string
 }
 
 export function AddDomainDialog({
+  applications,
   onSuccess,
   defaultApplicationId,
 }: AddDomainDialogProps) {
   const [open, setOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const submittingRef = useRef(false)
+  const requestRef = useRef(0)
+
+  const defaults = useMemo<AddDomainValues>(() => {
+    const selected = buildAddDomainDefaults(applications, defaultApplicationId)
+    return {
+      ...DEFAULT_ADD_DOMAIN_VALUES,
+      applicationId: selected.applicationId,
+      routingPort: selected.routingPort,
+    }
+  }, [applications, defaultApplicationId])
 
   const form = useForm<AddDomainValues>({
     resolver: zodResolver(addDomainSchema),
-    defaultValues: {
-      ...DEFAULT_ADD_DOMAIN_VALUES,
-      ...(defaultApplicationId ? { applicationId: defaultApplicationId } : {}),
-    },
+    defaultValues: defaults,
     mode: 'onTouched',
   })
 
@@ -62,6 +74,10 @@ export function AddDomainDialog({
     formState: { errors },
   } = form
 
+  useEffect(() => {
+    if (!open) reset(defaults)
+  }, [defaults, open, reset])
+
   const domainValue = useWatch({ control, name: 'domain', defaultValue: '' })
   const applicationIdValue = useWatch({ control, name: 'applicationId', defaultValue: '' })
   const forceHttpsValue = useWatch({ control, name: 'forceHttps', defaultValue: true })
@@ -70,32 +86,46 @@ export function AddDomainDialog({
   function handleOpenChange(next: boolean) {
     setOpen(next)
     if (!next) {
-      reset({
-        ...DEFAULT_ADD_DOMAIN_VALUES,
-        ...(defaultApplicationId ? { applicationId: defaultApplicationId } : {}),
-      })
+      requestRef.current += 1
+      submittingRef.current = false
       setIsSubmitting(false)
+      reset(defaults)
+    }
+  }
+
+  function selectApplication(applicationId: string) {
+    setValue('applicationId', applicationId, { shouldValidate: true })
+    const selected = applications.find((application) => application.id === applicationId)
+    if (selected?.internalPort != null) {
+      setValue('routingPort', selected.internalPort, { shouldValidate: true })
     }
   }
 
   async function onSubmit(data: AddDomainValues) {
+    if (submittingRef.current) return
+    submittingRef.current = true
+    const request = requestRef.current
     setIsSubmitting(true)
     try {
-      if (data.applicationId) {
-        await apiClient.post(`/applications/${data.applicationId}/domains`, {
-          hostname: data.domain,
-          internalPort: data.routingPort,
-          isPrimary: data.isPrimary,
-          forceHttps: data.forceHttps,
-        })
-      }
-    } catch {
-      // Graceful fallback for mock mode or offline local dev
-    } finally {
-      setIsSubmitting(false)
+      await createProductionDomain(apiClient, {
+        applicationId: data.applicationId,
+        hostname: data.domain,
+        internalPort: data.routingPort,
+        isPrimary: data.isPrimary,
+        forceHttps: data.forceHttps,
+      })
+      if (requestRef.current !== request) return
       toast.success(`Domain ${data.domain} added`)
       handleOpenChange(false)
       onSuccess?.()
+    } catch (err) {
+      if (requestRef.current !== request) return
+      toast.error(domainCreateErrorMessage(err))
+    } finally {
+      if (requestRef.current === request) {
+        submittingRef.current = false
+        setIsSubmitting(false)
+      }
     }
   }
 
@@ -122,7 +152,12 @@ export function AddDomainDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <form
+          onSubmit={(event) => {
+            void handleSubmit(onSubmit)(event)
+          }}
+          className="space-y-4"
+        >
           <FieldGroup>
             <Field data-invalid={Boolean(errors.domain)}>
               <FieldLabel htmlFor="domain-input">Domain hostname</FieldLabel>
@@ -140,9 +175,7 @@ export function AddDomainDialog({
               <FieldLabel htmlFor="app-select">Application</FieldLabel>
               <Select
                 value={applicationIdValue}
-                onValueChange={(val) =>
-                  setValue('applicationId', val ?? '', { shouldValidate: true })
-                }
+                onValueChange={(val) => selectApplication(val ?? '')}
               >
                 <SelectTrigger id="app-select" className="w-full">
                   <SelectValue placeholder="Select target application" />
@@ -150,7 +183,7 @@ export function AddDomainDialog({
                 <SelectContent>
                   {applications.map((app) => (
                     <SelectItem key={app.id} value={app.id}>
-                      {app.name} ({app.environment})
+                      {app.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
